@@ -10,7 +10,7 @@
  * Author: donnma
  * Author URI: https://donnma.com/
  * Plugin URI: https://github.com/donnma777/custom-crawler-control
- * GitHub: https://github.com/donnma777/custom-crawler-control
+ * GitHub: https://github.com/donnma777/
  * X: https://x.com/donnma777
  */
 

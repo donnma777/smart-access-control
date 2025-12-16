@@ -531,6 +531,6 @@ AIの学習・データ収集を目的としたクローラーや、User-Agent �
 
  - Author:  donnma 
  - HP URI:  https://donnma.com/ 
- - Plugin URI: https://github.com/donnma777/custom-crawler-control 
+ - Plugin URI: https://github.com/donnma777/smart-access-control
  - GitHub: https://github.com/donnma777 
  - X: https://x.com/donnma777
