@@ -455,7 +455,7 @@ class Custom_Admin_Settings {
             管理者向け WordPress プラグインです。(完全にアクセスを防ぐ保証はありません。ご了承ください。詳しくはGitHubリポジトリをご覧ください。)
         </p>
         <p style="margin: 0;">
-            🔗 GitHub : <a href="https://github.com/donnma777/custom-crawler-control" target="_blank" rel="noopener noreferrer">
+            🔗 GitHub : <a href="https://github.com/donnma777/smart-access-control" target="_blank" rel="noopener noreferrer">
                  リポジトリを見る
             </a>
         </p>
