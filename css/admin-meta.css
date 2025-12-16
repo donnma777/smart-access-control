@@ -1,0 +1,99 @@
+/* custom-crawler-control\css\admin-meta.css */
+
+/* ------------------------------------------------------------------- */
+/* 全体共通設定 (レイアウト安定化) */
+/* ------------------------------------------------------------------- */
+.ggc-panel * {
+    /* プラグインの全要素に標準のボックスモデルを強制 */
+    box-sizing: border-box;
+}
+
+.ggc-panel {
+    /* JSによる opacity, pointer-events 制御のために必須 */
+    transition: opacity 0.3s ease-in-out;
+    /* パネル自体の内側の余白 */
+    padding: 15px;
+    border: 1px solid #c3c4c7;
+    /* WordPress標準のボーダー */
+    background: #fff;
+    /* 背景色 */
+    margin-bottom: 20px;
+}
+
+/* ------------------------------------------------------------------- */
+/* セクションヘッダー (h4要素のスタイルリセットと調整) */
+/* ------------------------------------------------------------------- */
+.ggc-group-header {
+    /* h4が持つデフォルトの大きな余白をリセット */
+    margin-top: 0;
+    margin-bottom: 10px;
+    padding: 0;
+
+    /* float: right; が原因で親要素の高さが崩れるのを防ぐ */
+    overflow: hidden;
+
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 5px;
+    cursor: pointer;
+    font-size: 1.1em;
+    /* 見やすいサイズに調整 */
+    font-weight: 600;
+}
+
+/* ------------------------------------------------------------------- */
+/* アコーディオンの矢印 */
+/* ------------------------------------------------------------------- */
+.ggc-arrow {
+    transition: transform 0.2s ease-in-out;
+    display: inline-block;
+}
+
+.ggc-arrow.rotated {
+    transform: rotate(90deg);
+}
+
+/* ------------------------------------------------------------------- */
+/* アコーディオンコンテンツ (閉じきらない問題の解決) */
+/* ------------------------------------------------------------------- */
+.ggc-group-content {
+    overflow: hidden;
+    transition: max-height 200ms ease-in-out;
+
+    /* 閉じている状態: max-heightと同時にパディングも強制的にゼロ */
+    max-height: 0;
+    padding: 0;
+    margin: 0;
+}
+
+/* 開いている状態でのみ、必要なパディングを設定 */
+.ggc-group-content.open {
+    padding-bottom: 10px;
+    /* marginやpaddingはtransitionの対象外なので、openクラスでのみ設定 */
+}
+
+/* ------------------------------------------------------------------- */
+/* チェックボックスアイテム */
+/* ------------------------------------------------------------------- */
+.ggc-crawler-item,
+.ggc-ip-range-item,
+.ggc-page-pattern-item {
+    margin-bottom: 5px;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.ggc-crawler-item small,
+.ggc-ip-range-item small,
+.ggc-page-pattern-item small {
+    color: #666;
+    font-size: 11px;
+    margin-left: 5px;
+}
+
+.ggc-crawler-item input[type="checkbox"],
+.ggc-ip-range-item input[type="checkbox"],
+.ggc-page-pattern-item input[type="checkbox"] {
+    margin-right: 5px;
+    margin-top: -1px;
+    vertical-align: middle;
+}
