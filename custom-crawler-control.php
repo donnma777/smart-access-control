@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Smart Access Control アクセス制御
  * Description: アクセスを精密に制御する管理者向けプラグイン。Advanced access control plugin for administrators.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Text Domain: custom-crawler-control
  * Requires at least: 4.9+
  * Requires PHP: 7.0+

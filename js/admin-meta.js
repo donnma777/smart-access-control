@@ -23,12 +23,9 @@ jQuery(document).ready(function ($) {
             el.style.maxHeight = el.scrollHeight + 'px';
             $el.addClass('open');
         } else {
-            // 閉じる準備: 現在の max-height を設定してから transition で 0 に
-            el.style.maxHeight = el.scrollHeight + 'px';
-            setTimeout(() => {
-                el.style.maxHeight = '0px';
-                $el.removeClass('open');
-            }, 10);
+            // 閉じる
+            el.style.maxHeight = '0px';
+            $el.removeClass('open');
         }
     }
 
@@ -47,7 +44,6 @@ jQuery(document).ready(function ($) {
         $('#ggc-mode-selector-panel input, #ggc-crawler-list-panel input, #ggc_ip_ranges_panel input, #ggc_page_browser_patterns_panel input').prop('disabled', !isEnabled);
 
         updateStatusText();
-        updateModeDescriptions();
         updateModeDescriptions();
     }
 
@@ -88,7 +84,7 @@ jQuery(document).ready(function ($) {
         if ($ipDesc.length) {
             $ipDesc.text(
                 mode === 'blacklist'
-                    ? 'チェックしたIPからのアクセスを拒否します。'
+                    ? 'チェックしたIPからのアクセスを拒拒否します。'
                     : 'チェックしたIPからのアクセスを許可します。'
             ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
         }
@@ -168,26 +164,5 @@ jQuery(document).ready(function ($) {
 
     // 初期化を最初に実行
     initializeControls();
-
-    // ページロード時に、開いているべきアコーディオンをJSで開く (User-Agent)
-    $('#ggc-crawler-list-panel').find('.ggc-group-content').each(function () {
-        const $content = $(this);
-        // 一つでもチェックが入っているグループを開く
-        if ($content.find('input[type="checkbox"]:checked').length > 0) {
-            $content.addClass('open');
-            $content[0].style.maxHeight = $content[0].scrollHeight + 'px';
-            $content.prev('.ggc-group-header').find('.ggc-arrow').addClass('rotated');
-        }
-    });
-
-    // ページロード時に、開いているべきアコーディオンをJSで開く (不正UAパターン)
-    $('#ggc_page_browser_patterns_panel').find('.ggc-group-content').each(function () {
-        const $content = $(this);
-        if ($content.find('input[type="checkbox"]:checked').length > 0) {
-            $content.addClass('open');
-            $content[0].style.maxHeight = $content[0].scrollHeight + 'px';
-            $content.prev('.ggc-group-header').find('.ggc-arrow').addClass('rotated');
-        }
-    });
 
 });

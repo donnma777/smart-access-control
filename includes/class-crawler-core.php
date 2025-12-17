@@ -164,34 +164,27 @@ class Custom_Crawler_Core {
     // --------------------------------------------------------
 
     public function custom_cron_schedules($schedules) {
-        error_log('GGC Debug: custom_cron_schedules called.');
         if (!isset($schedules['hourly'])) {
             $schedules['hourly'] = ['interval' => HOUR_IN_SECONDS, 'display' => 'Once Hourly'];
-            error_log('GGC Debug: Added custom hourly schedule.');
         }
         if (!isset($schedules['twicedaily'])) {
             $schedules['twicedaily'] = ['interval' => 12 * HOUR_IN_SECONDS, 'display' => 'Twice Daily'];
-            error_log('GGC Debug: Added custom twicedaily schedule.');
         }
         if (!isset($schedules['daily'])) {
             $schedules['daily'] = ['interval' => DAY_IN_SECONDS, 'display' => 'Once Daily'];
-            error_log('GGC Debug: Added custom daily schedule.');
         }
         if (!isset($schedules['weekly'])) {
             $schedules['weekly'] = ['interval' => WEEK_IN_SECONDS, 'display' => 'Once Weekly'];
-            error_log('GGC Debug: Added custom weekly schedule.');
         }
         if (!isset($schedules['monthly'])) {
             $schedules['monthly'] = ['interval' => 30 * DAY_IN_SECONDS, 'display' => 'Once Monthly']; // Approximately 30 days
-            error_log('GGC Debug: Added custom monthly schedule.');
         }
         if (!isset($schedules['biannually'])) {
             $schedules['biannually'] = ['interval' => 6 * 30 * DAY_IN_SECONDS, 'display' => 'Once Biannually']; // Approximately 6 months
-            error_log('GGC Debug: Added custom biannually schedule.');
+
         }
         if (!isset($schedules['annually'])) {
             $schedules['annually'] = ['interval' => 365 * DAY_IN_SECONDS, 'display' => 'Once Annually']; // Approximately 365 days
-            error_log('GGC Debug: Added custom annually schedule.');
         }
         return $schedules;
     }

@@ -57,11 +57,12 @@
 /* ------------------------------------------------------------------- */
 .ggc-group-content {
     overflow: hidden;
-    transition: max-height 200ms ease-in-out;
+    transition: max-height 200ms ease-in-out, padding 200ms ease-in-out;
 
     /* 閉じている状態: max-heightと同時にパディングも強制的にゼロ */
     max-height: 0;
-    padding: 0;
+    padding-top: 0;
+    padding-bottom: 0;
     margin: 0;
 }
 
