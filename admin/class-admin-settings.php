@@ -208,7 +208,7 @@ class Custom_Admin_Settings {
     }
 
     /**
-     * IPアドレス範囲定義のサニタイズ（最終修正版 - IP/CIDR検証の緩和）
+     * IPアドレス範囲定義のサニタイズ
      */
 
     public function sanitize_ip_range_definitions($input) {

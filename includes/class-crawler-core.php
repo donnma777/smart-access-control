@@ -510,25 +510,22 @@ class Custom_Crawler_Core {
             }
         }
 
-        // 1. 不正ブラウザパターンチェック (Now conditional)
-        if ($control_active === 'yes') {
+        // 1. 不正ブラウザパターンチェック
+        // This check runs if master control is active and there are patterns to check.
+        // It's not conditional on $enable_page_ua_pattern_check anymore.
+        if ($control_active === 'yes') { 
             $all_global_patterns_structured = self::get_browser_block_patterns();
             $blocking_patterns_strings = [];
             
-            foreach ($all_global_patterns_structured as $key => $pattern_def) {
-                 if (isset($pattern_def['pattern']) && !empty($pattern_def['pattern'])) {
-                     $blocking_patterns_strings[$key] = $pattern_def['pattern']; 
-                 }
-            }
-            
+            // Only add patterns explicitly selected for THIS page.
+            // Global patterns are only applied if enable_page_ua_pattern_check is 'no' (default behaviour)
+            // or if post meta for _ggc_enable_page_ua_pattern_check is not set.
             if ($post_id && is_singular()) {
                 $selected_page_pattern_keys = get_post_meta($post_id, '_ggc_selected_page_browser_patterns', true);
                 if (is_array($selected_page_pattern_keys)) {
                     foreach ($selected_page_pattern_keys as $key) {
                         if (isset($all_global_patterns_structured[$key]) && isset($all_global_patterns_structured[$key]['pattern'])) {
-                            if (!isset($blocking_patterns_strings[$key])) {
-                                $blocking_patterns_strings[$key] = $all_global_patterns_structured[$key]['pattern'];
-                            }
+                            $blocking_patterns_strings[$key] = $all_global_patterns_structured[$key]['pattern'];
                         }
                     }
                 }
@@ -584,7 +581,11 @@ class Custom_Crawler_Core {
         }
 
         if (!$is_a_defined_crawler) {
-            return;
+            // ブラックリストモードの場合のみ、定義されていないクローラーは許可する
+            if ($control_mode === 'blacklist') {
+                return;
+            }
+            // ホワイトリストモードの場合、定義されていないクローラーはブロック対象となるため、処理を続行
         }
 
         $should_block_ua = false;
@@ -627,9 +628,18 @@ class Custom_Crawler_Core {
 
         if (!$should_block_ua && !empty($selected_ips)) {
             $is_ip_in_range = self::is_in_allowable_ip_range($selected_ips);
-            if (!$is_ip_in_range) {
-                $should_block_ip = true;
-                $message_ip = 'アクセス禁止：User-Agentは許可されていますが、IPアドレスが許可範囲外です。';
+            if ($control_mode === 'blacklist') {
+                // ブラックリストモードの場合: 選択されたIP範囲に一致したらブロック
+                if ($is_ip_in_range) {
+                    $should_block_ip = true;
+                    $message_ip = 'アクセス禁止：IPアドレスがブラックリストに登録されています。';
+                }
+            } else { // control_mode === 'whitelist'
+                // ホワイトリストモードの場合: 選択されたIP範囲に一致しない場合はブロック
+                if (!$is_ip_in_range) {
+                    $should_block_ip = true;
+                    $message_ip = 'アクセス禁止：User-Agentは許可されていますが、IPアドレスが許可範囲外です。';
+                }
             }
         }
 
