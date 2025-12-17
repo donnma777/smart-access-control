@@ -78,8 +78,8 @@ jQuery(document).ready(function ($) {
         if ($uaDesc.length) {
             $uaDesc.text(
                 mode === 'blacklist'
-                    ? '【個別拒否（ブラックリスト）】: チェックしたUser-Agentからのアクセスを拒否します。それ以外のUser-Agentからのアクセスは許可されます。'
-                    : '【ALL拒否（ホワイトリスト）】: チェックしたUser-Agentからのアクセスのみを許可します。それ以外のUser-Agentからのアクセスは拒否されます。'
+                    ? 'チェックしたUser-Agentからのアクセスを拒否します。'
+                    : 'チェックしたUser-Agentからのアクセスのみを許可します。'
             ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
         }
 
@@ -88,8 +88,8 @@ jQuery(document).ready(function ($) {
         if ($ipDesc.length) {
             $ipDesc.text(
                 mode === 'blacklist'
-                    ? '【個別拒否 (ブラックリスト)】: チェックしたクローラーをUser-Agentでブロックしない場合でも、IPが範囲外であればブロックします。'
-                    : '【ALL拒否 (ホワイトリスト)】: チェックしたクローラーをUser-Agentで許可する場合、IPが範囲内でなければブロックします。'
+                    ? 'チェックしたIPからのアクセスを拒否します。'
+                    : 'チェックしたIPからのアクセスを許可します。'
             ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
         }
 
@@ -98,8 +98,8 @@ jQuery(document).ready(function ($) {
         if ($badUaDesc.length) {
             $badUaDesc.html(
                 mode === 'blacklist'
-                    ? '【個別拒否 (ブラックリスト)】: チェックした不正UAパターンに合致するアクセスをブロックします。<br>'
-                    : '【ALL拒否 (ホワイトリスト)】: チェックした不正UAパターンに合致するアクセスも含め、制御ルールに基づいてアクセスを判定します。<br>'
+                    ? 'チェックした不正UAパターンに合致するアクセスを拒否します。'
+                    : 'チェックした不正UAパターンに合致するアクセスも許可します。'
             ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
         }
     }

@@ -170,8 +170,8 @@ class Custom_Post_Metabox {
             <div id="ggc-crawler-list-panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding:10px; <?php echo esc_attr($panel_style); ?>">
                 <p class="description" id="ggc-ua-control-description" style="color:<?php echo $control_mode === 'blacklist' ? '#0073aa' : 'red'; ?>; margin-top: 5px;">
                 <?php echo $control_mode === 'blacklist'
-                    ? '【個別拒否（ブラックリスト）】: チェックしたUser-Agentからのアクセスを拒否します。それ以外のUser-Agentからのアクセスは許可されます。'
-                    : '【ALL拒否（ホワイトリスト）】: チェックしたUser-Agentからのアクセスのみを許可します。それ以外のUser-Agentからのアクセスは拒否されます。';
+                    ? 'チェックしたUser-Agentからのアクセスを拒否します。'
+                    : 'チェックしたUser-Agentからのアクセスのみを許可します。';
                 ?>
                 </p>
                 <?php $group_counter = 0; foreach ($grouped_bots as $group_label => $bots_in_group) : $group_counter++; $group_id = 'ggc-group-' . $group_counter; ?>
@@ -193,16 +193,13 @@ class Custom_Post_Metabox {
 
             <p style="font-size: 11px; margin-bottom: 5px; border-top: 1px dashed #ccc; padding-top: 10px; font-weight: bold;"> IPアドレス制御リスト (User-Agent偽装対策): </p>
             <div id="ggc_ip_ranges_panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; padding:10px; <?php echo esc_attr($panel_style); ?>">
-                <p id="ggc-ip-control-description" class="description" style="color:<?php echo $control_mode === 'blacklist' ? '#0073aa' : 'red'; ?>;">
-                <?php
-                echo
-                $message = ($control_mode === 'blacklist')
-                    ? '【個別拒否 (ブラックリスト)】: チェックしたクローラーをUser-Agentでブロックしない場合でも、IPが範囲外であればブロックします。'
-                    : '【ALL拒否 (ホワイトリスト)】: チェックしたクローラーをUser-Agentで許可する場合、IPが範囲内でなければブロックします。';
-                    echo $message;
-                ?>
-
-                </p>
+                                <p id="ggc-ip-control-description" class="description" style="color:<?php echo $control_mode === 'blacklist' ? '#0073aa' : 'red'; ?>;">
+                                <?php
+                                echo ($control_mode === 'blacklist')
+                                    ? 'チェックしたIPからのアクセスを拒否します。'
+                                    : 'チェックしたIPからのアクセスを許可します。。';
+                                ?>
+                                </p>
                 
                 <?php if (!empty($all_ip_ranges)): ?>
                     <?php foreach ($all_ip_ranges as $key => $ip_def) : ?>
@@ -224,11 +221,9 @@ class Custom_Post_Metabox {
              <div id="ggc_page_browser_patterns_panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; padding:10px; <?php echo esc_attr($panel_style); ?>">
                 <p class="description" id="ggc-page-browser-patterns-description" style="color:<?php echo $control_mode === 'blacklist' ? '#0073aa' : 'red'; ?>;">
                 <?php echo $control_mode === 'blacklist' 
-                    ? '【個別拒否 (ブラックリスト)】: チェックした不正UAパターンに合致するアクセスをブロックします。<br>'
-                    : '【ALL拒否 (ホワイトリスト)】: チェックした不正UAパターンに合致するアクセスも含め、制御ルールに基づいてアクセスを判定します。<br>';
+                    ? 'チェックした不正UAパターンに合致するアクセスを拒否します。'
+                    : 'チェックした不正UAパターンに合致するアクセスも許可します。';
                 ?>
-                グローバルで常に適用される不正UAパターンに加え、このページでのみ追加で適用するパターンを選択できます。
-                これは、悪意のあるボットや古いブラウザをブロックする目的であり、クローラー制御のモードとは独立して機能します。
                 </p>
                 
                 <?php $group_counter = 0; foreach ($grouped_browser_patterns as $group_label => $patterns_in_group) : $group_counter++; $group_id = 'ggc-pattern-group-' . $group_counter; ?>

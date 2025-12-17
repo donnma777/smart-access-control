@@ -1,7 +1,6 @@
 // custom-crawler-control\js\admin-settings.js
 
 jQuery(document).ready(function ($) {
-    console.log('ggc-settings-js loaded');
 
     // ----------------------------------------------------------------------
     // ヘルパー関数: ユニークなキーを生成
@@ -56,7 +55,6 @@ jQuery(document).ready(function ($) {
                 try {
                     showIpUpdateModal(resp.data.result);
                 } catch (err) {
-                    console.error('showIpUpdateModal error', err);
                     alert('更新は完了しましたが、結果の表示に失敗しました。ブラウザのコンソールを確認してください。');
                 }
             } else {
