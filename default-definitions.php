@@ -34,7 +34,7 @@ function ggc_get_default_bots() {
 
         // --- OpenAI ---
         'OpenAI' => [
-            'uas' => ['GPTBot', 'ChatGPT-User', 'OAI-SearchBot'],
+            'uas' => ['GPTBot', 'ChatGPT-User/1.0' , 'ChatGPT-User', 'OAI-SearchBot'],
             'label' => 'GPTBot (OpenAI / ChatGPT)',
             'group_label' => '2. 主要AI / LLM クローラー',
             'description' => 'GPT-4やChatGPTなどOpenAIのデータ収集ボット。',
@@ -171,7 +171,7 @@ function ggc_get_default_ip_ranges() {
         'Google_IP_Range' => [
             'ranges' => [],
             'label' => 'Google クローラー IP範囲',
-            'description' => 'Googlebotの正式なIPアドレス範囲。1日1回自動的に最新情報に更新されます。',
+            'description' => 'Googlebotの正式なIPアドレス範囲。',
             'source_url' => 'https://developers.google.com/search/apis/ipranges/googlebot.json',
             'allow_placeholder' => true,
             'is_auto' => true,
@@ -179,7 +179,7 @@ function ggc_get_default_ip_ranges() {
         'GPTBot_IP_Range' => [
             'ranges' => [],
             'label' => 'GPTBot (OpenAI) IP範囲',
-            'description' => 'OpenAIのGPTBot学習用クローラーのIPアドレス。1日1回自動的に最新情報に更新されます。',
+            'description' => 'OpenAIのGPTBot学習用クローラーのIPアドレス。',
             'source_url' => 'https://openai.com/gptbot.json',
             'allow_placeholder' => true,
             'is_auto' => true,
@@ -273,6 +273,6 @@ function ggc_get_default_browser_patterns() {
             'label' => 'okhttp (不明ボット)',
             'group_label' => 'その他のボット',
             'description' => 'モバイルアプリ等からの不明なアクセス。',
-        ],
+        ]
     ];
 }
