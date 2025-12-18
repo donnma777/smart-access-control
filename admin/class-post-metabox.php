@@ -37,20 +37,20 @@ class Custom_Post_Metabox {
 
             // admin-meta.js の読み込み (キャッシュ対策あり)
             $js_asset_path = $plugin_dir . 'js/admin-meta.js';
-            wp_enqueue_script( 
-                'ggc-admin-meta-js', 
-                $plugin_url . 'js/admin-meta.js', 
-                ['jquery'], 
+            wp_enqueue_script(
+                'ggc-admin-meta-js',
+                $plugin_url . 'js/admin-meta.js',
+                ['jquery'],
                 file_exists($js_asset_path) ? filemtime($js_asset_path) : '4.3.4', // Fallback version
-                true 
-            ); 
+                true
+            );
 
             // admin-meta.css の読み込み (キャッシュ対策あり)
             $css_asset_path = $plugin_dir . 'css/admin-meta.css';
-            wp_enqueue_style( 
-                'ggc-admin-meta-css', 
-                $plugin_url . 'css/admin-meta.css', 
-                [], 
+            wp_enqueue_style(
+                'ggc-admin-meta-css',
+                $plugin_url . 'css/admin-meta.css',
+                [],
                 file_exists($css_asset_path) ? filemtime($css_asset_path) : '4.3.4' // Fallback version
             );
         }
@@ -64,11 +64,11 @@ class Custom_Post_Metabox {
         $screens = ['post', 'page'];
         foreach ($screens as $screen) {
             add_meta_box(
-                'ggc_crawler_control', 
-                'アクセス制御', 
-                [ $this, 'meta_box_callback' ], 
-                $screen, 
-                'side', 
+                'ggc_crawler_control',
+                'アクセス制御',
+                [ $this, 'meta_box_callback' ],
+                $screen,
+                'side',
                 'high'
             );
         }
@@ -90,10 +90,10 @@ class Custom_Post_Metabox {
         } else {
             $controls_enabled = ($post_control_active === 'yes');
         }
-        
+
         // 2. 制御モード
-        $control_mode = get_post_meta($post->ID, '_ggc_control_mode', true) ?: 'blacklist'; 
-        
+        $control_mode = get_post_meta($post->ID, '_ggc_control_mode', true) ?: 'blacklist';
+
         // 3. 選択中の UA リスト
         $selected_crawlers = get_post_meta($post->ID, '_ggc_selected_crawlers', true);
         if (!is_array($selected_crawlers)) $selected_crawlers = [];
@@ -176,14 +176,14 @@ class Custom_Post_Metabox {
                 </p>
                 <?php $group_counter = 0; foreach ($grouped_bots as $group_label => $bots_in_group) : $group_counter++; $group_id = 'ggc-group-' . $group_counter; ?>
                     <h4 class="ggc-group-header" data-target="#<?php echo esc_attr($group_id); ?>" style="cursor: pointer; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 15px; margin-bottom: 10px;">
-                        <span class="dashicons dashicons-arrow-right-alt2 ggc-arrow" style="font-size: 16px; margin-right: 5px;"></span> 
+                        <span class="dashicons dashicons-arrow-right-alt2 ggc-arrow" style="font-size: 16px; margin-right: 5px;"></span>
                         <?php echo esc_html($group_label); ?>
                         <small style="float: right; cursor: pointer; color: #0073aa;" class="ggc-toggle-all" data-group="<?php echo esc_attr($group_id); ?>"> [全選択/解除] </small>
                     </h4>
                     <div id="<?php echo esc_attr($group_id); ?>" class="ggc-group-content" style="padding-bottom: 0px;">
                         <?php foreach ($bots_in_group as $key => $bot) : ?>
                             <label class="ggc-crawler-item" style="display: block; margin-bottom: 5px;">
-                                <input type="checkbox" name="ggc_selected_crawlers_field[]" value="<?php echo esc_attr($key); ?>" class="ggc-selected-crawler-checkbox <?php echo esc_attr($group_id); ?>" <?php checked(in_array($key, $selected_crawlers), true); ?>>
+                                <input type="checkbox" name="ggc_selected_crawlers_field[]" value="<?php echo esc_attr($key); ?>" class="ggc-selected-crawler-checkbox <?php echo esc_attr($group_id); ?>" <?php checked(in_array(sanitize_key($key), $selected_crawlers), true); ?>>
                                 <strong><?php echo esc_html($bot['label']); ?></strong> <small><?php echo esc_html($bot['description']); ?></small>
                             </label>
                         <?php endforeach; ?>
@@ -192,20 +192,20 @@ class Custom_Post_Metabox {
             </div>
 
             <p style="font-size: 11px; margin-bottom: 5px; border-top: 1px dashed #ccc; padding-top: 10px; font-weight: bold;"> IPアドレス制御リスト (User-Agent偽装対策): </p>
-            <div id="ggc_ip_ranges_panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; padding:10px; <?php echo esc_attr($panel_style); ?>">
+            <div id="ggc-ip-ranges-panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding:10px; <?php echo esc_attr($panel_style); ?>">
                                 <p id="ggc-ip-control-description" class="description" style="color:<?php echo $control_mode === 'blacklist' ? '#0073aa' : 'red'; ?>;">
                                 <?php
                                 echo ($control_mode === 'blacklist')
                                     ? 'チェックしたIPからのアクセスを拒否します。'
-                                    : 'チェックしたIPからのアクセスを許可します。。';
+                                    : 'チェックしたIPからのアクセスを許可します。';
                                 ?>
                                 </p>
-                
+
                 <?php if (!empty($all_ip_ranges)): ?>
                     <?php foreach ($all_ip_ranges as $key => $ip_def) : ?>
                         <label class="ggc-ip-range-item" style="display: block; margin-bottom: 5px;">
-                            <input type="checkbox" name="ggc_selected_ips_field[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, $selected_ips), true); ?> class="ggc-selected-ip-checkbox">
-                            <strong><?php echo esc_html($ip_def['label']); ?></strong> 
+                            <input type="checkbox" name="ggc_selected_ips_field[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array(sanitize_key($key), $selected_ips), true); ?> class="ggc-selected-ip-checkbox">
+                            <strong><?php echo esc_html($ip_def['label']); ?></strong>
                             <small><?php echo esc_html($ip_def['description']); ?></small>
                             <?php if ($ip_def['is_auto'] ?? false): ?>
                                 <small style="color: green;">(自動更新)</small>
@@ -218,25 +218,25 @@ class Custom_Post_Metabox {
             </div>
 
             <p style="font-size: 11px; margin-bottom: 5px; border-top: 1px dashed #ccc; padding-top: 10px; font-weight: bold;"> ページ固有の不正UAパターン適用: </p>
-             <div id="ggc_page_browser_patterns_panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; padding:10px; <?php echo esc_attr($panel_style); ?>">
+             <div id="ggc-page-browser-patterns-panel" class="ggc-panel" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding:10px; <?php echo esc_attr($panel_style); ?>">
                 <p class="description" id="ggc-page-browser-patterns-description" style="color:<?php echo $control_mode === 'blacklist' ? '#0073aa' : 'red'; ?>;">
-                <?php echo $control_mode === 'blacklist' 
+                <?php echo $control_mode === 'blacklist'
                     ? 'チェックした不正UAパターンに合致するアクセスを拒否します。'
                     : 'チェックした不正UAパターンに合致するアクセスも許可します。';
                 ?>
                 </p>
-                
+
                 <?php $group_counter = 0; foreach ($grouped_browser_patterns as $group_label => $patterns_in_group) : $group_counter++; $group_id = 'ggc-pattern-group-' . $group_counter; ?>
                     <h4 class="ggc-group-header" data-target="#<?php echo esc_attr($group_id); ?>" style="cursor: pointer; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 15px; margin-bottom: 10px;">
-                        <span class="dashicons dashicons-arrow-right-alt2 ggc-arrow" style="font-size: 16px; margin-right: 5px;"></span> 
+                        <span class="dashicons dashicons-arrow-right-alt2 ggc-arrow" style="font-size: 16px; margin-right: 5px;"></span>
                         <?php echo esc_html($group_label); ?>
                         <small style="float: right; cursor: pointer; color: #0073aa;" class="ggc-toggle-all-pattern" data-group="<?php echo esc_attr($group_id); ?>"> [全選択/解除] </small>
                     </h4>
                     <div id="<?php echo esc_attr($group_id); ?>" class="ggc-group-content" style="padding-bottom: 0px;">
                         <?php foreach ($patterns_in_group as $key => $pattern_def) : ?>
                             <label class="ggc-page-pattern-item" style="display: block; margin-bottom: 5px;">
-                                <input type="checkbox" name="ggc_selected_page_browser_patterns_field[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, $selected_page_browser_patterns), true); ?> class="ggc-page-pattern <?php echo esc_attr($group_id); ?>">
-                                <strong><?php echo esc_html($pattern_def['label']); ?></strong> 
+                                <input type="checkbox" name="ggc_selected_page_browser_patterns_field[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array(sanitize_key($key), $selected_page_browser_patterns), true); ?> class="ggc-page-pattern <?php echo esc_attr($group_id); ?>">
+                                <strong><?php echo esc_html($pattern_def['label']); ?></strong>
                                 <small><?php echo esc_html($pattern_def['description']); ?> (パターン: <code style="font-size: 10px;"><?php echo esc_html($pattern_def['pattern']); ?></code>)</small>
                             </label>
                         <?php endforeach; ?>
@@ -246,13 +246,13 @@ class Custom_Post_Metabox {
 
 
             <p style="font-size:11px; margin-top:10px; color:#666;" id="ggc-current-mode-status">
-                現在のモード: 
+                現在のモード:
                 <?php if ($controls_enabled): ?>
-                    <strong style="color:<?php echo $control_mode === 'blacklist' 
-                    ? '#0073aa' 
+                    <strong style="color:<?php echo $control_mode === 'blacklist'
+                    ? '#0073aa'
                     : 'red'; ?>;">
-                        <?php echo $control_mode === 'blacklist' 
-                        ? '個別拒否 (ブラックリスト)' 
+                        <?php echo $control_mode === 'blacklist'
+                        ? '個別拒否 (ブラックリスト)'
                         : 'ALL拒否 (ホワイトリスト)';
                         ?>
                     </strong>
@@ -273,32 +273,23 @@ class Custom_Post_Metabox {
     public function save_crawler_meta_box($post_id) {
 
         // 1. ノンス（Nonce）チェック：不正なリクエストでないか検証
-        if (!isset($_POST['ggc_crawler_control_nonce']) || !wp_verify_nonce(sanitize_key($_POST['ggc_crawler_control_nonce']), 'ggc_crawler_control_save')) {
+        if (!isset($_POST['ggc_crawler_control_nonce']) || !wp_verify_nonce($_POST['ggc_crawler_control_nonce'], 'ggc_crawler_control_save')) {
             return $post_id;
         }
 
-        // 2. 権限チェック：設定を保存する権限があるか検証
-        if (!current_user_can('edit_post', $post_id)) {
+        // 2. 権限チェック、自動保存、投稿タイプを検証
+        if ( ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) || ! current_user_can( 'edit_post', $post_id ) ) {
             return $post_id;
         }
-
-        // 3. 自動保存チェック：リビジョン作成時など、自動保存でないか検証
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+        // 保存対象の投稿タイプか確認
+        $post_type = get_post_type($post_id);
+        if ( ! in_array( $post_type, [ 'post', 'page' ] ) ) {
             return $post_id;
         }
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (!current_user_can('edit_post', $post_id)) return;
 
         // 1. マスターON/OFFスイッチの保存
-        $control_active = isset($_POST['ggc_control_active_field']) ? 'yes' : 'no'; 
-        $default_active = Custom_Crawler_Core::get_default_control_active();
-
-        // 値がグローバルデフォルトと同じ場合は、post metaを削除してグローバル設定を優先させる
-        if ($control_active === $default_active) {
-            delete_post_meta($post_id, '_ggc_control_active');
-        } else {
-            update_post_meta($post_id, '_ggc_control_active', $control_active);
-        }
+        $control_active = isset($_POST['ggc_control_active_field']) ? 'yes' : 'no';
+        update_post_meta($post_id, '_ggc_control_active', $control_active);
 
         // 制御がONの場合のみ、詳細設定を保存
         if ($control_active === 'yes') {
@@ -313,11 +304,11 @@ class Custom_Post_Metabox {
             // 4. 選択された IP リスト
             $selected_ips = array_map('sanitize_key', $_POST['ggc_selected_ips_field'] ?? []);
             update_post_meta($post_id, '_ggc_selected_ips', $selected_ips);
-            
+
             // 5. 選択された 不正UAパターン
             $selected_page_browser_patterns = array_map('sanitize_key', $_POST['ggc_selected_page_browser_patterns_field'] ?? []);
             update_post_meta($post_id, '_ggc_selected_page_browser_patterns', $selected_page_browser_patterns);
-            
+
         } else {
             // マスターOFFの時は個別設定をクリア
             delete_post_meta($post_id, '_ggc_control_mode');

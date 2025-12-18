@@ -6,7 +6,7 @@ jQuery(document).ready(function ($) {
     // 変数定義
     // ----------------------------------------------------------------------
     const masterToggle = $('#ggc_control_active_field');
-    const allPanels = $('#ggc-mode-selector-panel, #ggc-crawler-list-panel, #ggc_ip_ranges_panel, #ggc_page_browser_patterns_panel');
+    const allPanels = $('#ggc-mode-selector-panel, #ggc-crawler-list-panel, #ggc-ip-ranges-panel, #ggc-page-browser-patterns-panel');
     const currentModeStatus = $('#ggc-current-mode-status');
 
 
@@ -40,8 +40,7 @@ jQuery(document).ready(function ($) {
             'pointer-events': isEnabled ? 'auto' : 'none'
         });
 
-        // OFF の時は、ラジオボタンとチェックボックスを全て無効化
-        $('#ggc-mode-selector-panel input, #ggc-crawler-list-panel input, #ggc_ip_ranges_panel input, #ggc_page_browser_patterns_panel input').prop('disabled', !isEnabled);
+        // OFF の時は、UI上操作不可とする（disabled は値が POST されないため使わない）
 
         updateStatusText();
         updateModeDescriptions();
