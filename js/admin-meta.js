@@ -5,10 +5,10 @@ jQuery(document).ready(function ($) {
     // ----------------------------------------------------------------------
     // 変数定義
     // ----------------------------------------------------------------------
-    const masterToggle = $('#ggc_control_active_field');
-    const allPanels = $('#ggc-mode-selector-panel, #ggc-crawler-list-panel, #ggc-ip-ranges-panel, #ggc-page-browser-patterns-panel');
-    const currentModeStatus = $('#ggc-current-mode-status');
-
+    const uaModeSelect = $('#ggc_ua_control_mode');
+    const ipModeSelect = $('#ggc_ip_control_mode');
+    const uaListWrapper = $('#ggc-ua-list-wrapper');
+    const ipListWrapper = $('#ggc-ip-list-wrapper');
 
     // ----------------------------------------------------------------------
     // 1. アコーディオンアニメーション
@@ -19,8 +19,8 @@ jQuery(document).ready(function ($) {
         const isHidden = !$el.hasClass('open');
 
         if (isHidden) {
-            // 開く: scrollHeight を使って最大高さを計算
-            el.style.maxHeight = el.scrollHeight + 'px';
+            // 開く: scrollHeight を使って最大高さを計算 (auto height)
+            el.style.maxHeight = 'none';
             $el.addClass('open');
         } else {
             // 閉じる
@@ -30,96 +30,50 @@ jQuery(document).ready(function ($) {
     }
 
     // ----------------------------------------------------------------------
-    // 2. 初期化
+    // 2. 表示制御
     // ----------------------------------------------------------------------
-    function initializeControls() {
-        const isEnabled = masterToggle.prop('checked');
+    function updateVisibility() {
+        const uaMode = uaModeSelect.val();
+        const ipMode = ipModeSelect.val();
+        const uaDesc = $('#ggc-ua-description');
+        const ipDesc = $('#ggc-ip-description');
 
-        allPanels.css({
-            'opacity': isEnabled ? '1' : '0.45',
-            'pointer-events': isEnabled ? 'auto' : 'none'
-        });
-
-        // OFF の時は、UI上操作不可とする（disabled は値が POST されないため使わない）
-
-        updateStatusText();
-        updateModeDescriptions();
-    }
-
-    // ----------------------------------------------------------------------
-    // 3. ステータス表示の更新
-    // ----------------------------------------------------------------------
-    function updateStatusText() {
-        const isEnabled = masterToggle.prop('checked');
-        const mode = $('input[name="ggc_control_mode_field"]:checked').val();
-
-        if (isEnabled) {
-            if (mode === 'blacklist') {
-                currentModeStatus.html('現在のモード: <strong style="color:#0073aa;">個別拒否 (ブラックリスト)</strong>');
+        if (uaMode === 'blacklist' || uaMode === 'whitelist') {
+            uaListWrapper.slideDown(200);
+            if (uaMode === 'whitelist') {
+                uaDesc.text('チェックしたUser-Agentを許可します (ホワイトリスト)。');
             } else {
-                currentModeStatus.html('現在のモード: <strong style="color:red;">ALL拒否 (ホワイトリスト)</strong>');
+                uaDesc.text('チェックしたUser-Agentを拒否します (ブラックリスト)。');
             }
         } else {
-            currentModeStatus.html('現在のモード: <strong style="color:green;">ALL許可 (制御無効)</strong>');
+            uaListWrapper.slideUp(200);
+        }
+
+        if (ipMode === 'blacklist' || ipMode === 'whitelist') {
+            ipListWrapper.slideDown(200);
+            if (ipMode === 'blacklist') {
+                ipDesc.text('チェックしたIP範囲を拒否します (ブラックリスト)。');
+            } else {
+                ipDesc.text('チェックしたIP範囲を許可します (ホワイトリスト)。');
+            }
+        } else {
+            ipListWrapper.slideUp(200);
         }
     }
 
-    // IP制御の説明文をモードに合わせて更新
-    function updateModeDescriptions() {
-        const mode = $('input[name="ggc_control_mode_field"]:checked').val();
-
-        // UA説明
-        const $uaDesc = $('#ggc-ua-control-description');
-        if ($uaDesc.length) {
-            $uaDesc.text(
-                mode === 'blacklist'
-                    ? 'チェックしたUser-Agentからのアクセスを拒否します。'
-                    : 'チェックしたUser-Agentからのアクセスのみを許可します。'
-            ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
-        }
-
-        // IP説明
-        const $ipDesc = $('#ggc-ip-control-description');
-        if ($ipDesc.length) {
-            $ipDesc.text(
-                mode === 'blacklist'
-                    ? 'チェックしたIPからのアクセスを拒拒否します。'
-                    : 'チェックしたIPからのアクセスを許可します。'
-            ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
-        }
-
-        // 不正UA説明
-        const $badUaDesc = $('#ggc-page-browser-patterns-description');
-        if ($badUaDesc.length) {
-            $badUaDesc.html(
-                mode === 'blacklist'
-                    ? 'チェックした不正UAパターンに合致するアクセスを拒否します。'
-                    : 'チェックした不正UAパターンに合致するアクセスも許可します。'
-            ).css('color', mode === 'blacklist' ? '#0073aa' : 'red');
-        }
-    }
-
-
-
     // ----------------------------------------------------------------------
-    // 4. イベントハンドラ
+    // 3. イベントハンドラ
     // ----------------------------------------------------------------------
 
-    // マスターON/OFFスイッチ
-    masterToggle.on('change', function () {
-        initializeControls();
-    });
-
-    // 制御モード (ラジオボタン)
-    $('input[name="ggc_control_mode_field"]').on('change', function () {
-        updateStatusText();
-        updateModeDescriptions();
-    });
+    // モード変更時
+    uaModeSelect.on('change', updateVisibility);
+    ipModeSelect.on('change', updateVisibility);
 
     // グループヘッダー (アコーディオン開閉)
     $(document).on('click', '.ggc-group-header', function (e) {
         if ($(e.target).hasClass('ggc-toggle-all') || $(e.target).closest('.ggc-toggle-all').length) return;
         if ($(e.target).hasClass('ggc-toggle-all-pattern') || $(e.target).closest('.ggc-toggle-all-pattern').length) return;
+        if ($(e.target).hasClass('ggc-toggle-all-ip') || $(e.target).closest('.ggc-toggle-all-ip').length) return;
 
         const $header = $(this);
         const targetId = $header.data('target');
@@ -127,18 +81,43 @@ jQuery(document).ready(function ($) {
         const $arrow = $header.find('.ggc-arrow');
 
         if ($content.length === 0) return;
-        toggleSlide($content);
+
+        // Simple toggle class for CSS-based or JS-based handling
+        $content.toggleClass('open');
+        if ($content.hasClass('open')) {
+            $content.css('display', 'block');
+        } else {
+            $content.css('display', 'none');
+        }
+        $arrow.toggleClass('rotated');
+    });
+
+    // セクションヘッダー (アコーディオン開閉) - User-Agent定義1 / 定義2
+    $(document).on('click', '.ggc-section-header', function (e) {
+        if ($(e.target).hasClass('ggc-toggle-section') || $(e.target).closest('.ggc-toggle-section').length) return;
+
+        const $header = $(this);
+        const targetId = $header.data('target');
+        const $content = $(targetId);
+        const $arrow = $header.find('.ggc-arrow');
+
+        if ($content.length === 0) return;
+
+        $content.toggleClass('open');
+        if ($content.hasClass('open')) {
+            $content.slideDown(200);
+        } else {
+            $content.slideUp(200);
+        }
         $arrow.toggleClass('rotated');
     });
 
     // カテゴリごとの全選択/全解除 (User-Agentリスト用)
     $(document).on('click', '.ggc-toggle-all', function (e) {
         e.preventDefault();
+        // 親要素のモードチェックは不要 (非表示なら操作できないため)
 
-        if (!masterToggle.prop('checked')) return;
-
-        const $boxes = $(this).closest('.ggc-group-header').next('.ggc-group-content').find('.ggc-selected-crawler-checkbox').not(':disabled');
-
+        const $boxes = $(this).closest('.ggc-group-header').next('.ggc-group-content').find('input[type="checkbox"]').not(':disabled');
         const allChecked = $boxes.length > 0 && $boxes.length === $boxes.filter(':checked').length;
 
         $boxes.prop('checked', !allChecked);
@@ -149,19 +128,44 @@ jQuery(document).ready(function ($) {
     $(document).on('click', '.ggc-toggle-all-pattern', function (e) {
         e.preventDefault();
 
-        if (!masterToggle.prop('checked')) return;
-
-        // 対象のチェックボックスをDOMトラバーサルで特定
-        const $boxes = $(this).closest('.ggc-group-header').next('.ggc-group-content').find('.ggc-page-pattern').not(':disabled');
-
+        const $boxes = $(this).closest('.ggc-group-header').next('.ggc-group-content').find('input[type="checkbox"]').not(':disabled');
         const allChecked = $boxes.length > 0 && $boxes.length === $boxes.filter(':checked').length;
 
         $boxes.prop('checked', !allChecked);
         $boxes.trigger('change');
     });
 
+    // カテゴリごとの全選択/全解除 (IPリスト用)
+    $(document).on('click', '.ggc-toggle-all-ip', function (e) {
+        e.preventDefault();
 
-    // 初期化を最初に実行
-    initializeControls();
+        const $boxes = $(this).closest('.ggc-group-header').next('.ggc-group-content').find('input[type="checkbox"]').not(':disabled');
+        const allChecked = $boxes.length > 0 && $boxes.length === $boxes.filter(':checked').length;
 
+        $boxes.prop('checked', !allChecked);
+        $boxes.trigger('change');
+    });
+
+    // セクションごとの全選択/全解除 (User-Agent定義1 / 定義2)
+    $(document).on('click', '.ggc-toggle-section', function (e) {
+        e.preventDefault();
+        e.stopPropagation(); // ヘッダーのクリックイベント伝播防止
+
+        const targetId = $(this).data('section');
+        const $container = $('#' + targetId);
+
+        if ($container.length === 0) return;
+
+        const $boxes = $container.find('input[type="checkbox"]').not(':disabled');
+        const allChecked = $boxes.length > 0 && $boxes.length === $boxes.filter(':checked').length;
+
+        $boxes.prop('checked', !allChecked);
+        $boxes.trigger('change');
+    });
+
+    // 初期化
+    updateVisibility();
+
+    // アコーディオンの初期状態 (すべて閉じる or 開く? CSSで制御されているがJSでも補完)
+    $('.ggc-group-content').hide();
 });
