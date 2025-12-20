@@ -16,10 +16,9 @@
     *   **ブラックリスト**: 指定したIP範囲を拒否。
     *   **ホワイトリスト**: 指定したIP範囲のみ許可（社内限定公開などに最適）。
 
-### 2. 高度な定義リスト
+### 2. 高度な定義リストの例
 管理画面で以下のリストを定義できます。
-*   **User-Agent 定義1 (既知のボット)**: Googlebot, Bingbot, GPTBot などの善良なボット。
-*   **User-Agent 定義2 (パターン)**: "headless", "selenium", "python" など、部分一致でブロックしたいキーワード（改行区切りで複数指定可能）。
+*   **User-Agent 定義 リスト1 & 2**: Googlebot, Bingbot, GPTBot　"headless", selenium, python などのUser-Agentを判別してブロックしたいものを定義。
 *   **IPアドレス範囲 1 & 2**: CIDR形式でのIP範囲指定。GoogleやOpenAIの公開IPリストを自動取得・更新する機能も搭載。
 
 ### 3. 診断ツール & 使い方ガイド
