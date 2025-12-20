@@ -33,23 +33,35 @@ jQuery(document).ready(function ($) {
         $('#ggc-ip-ranges-tbody').append(newRowHtml);
     });
 
+    // ----------------------------------------------------------------------
+    // 2-2. IP範囲 定義2の追加・削除
+    // ----------------------------------------------------------------------
+    $('#ggc-add-ip-2').on('click', function () {
+        const template = $('#ggc-ip-row-template-2').html();
+        const newKey = generateUniqueKey('custom_ip2_');
+        const newRowHtml = template.replace(/__KEY__/g, newKey);
+        $('#ggc-ip-ranges-tbody-2').append(newRowHtml);
+    });
+
     $(document).on('click', '.ggc-remove-ip', function () {
         $(this).closest('tr').remove();
     });
 
     // 非同期で IP 更新を実行し、結果をモーダルで表示
-    $(document).on('click', '#ggc-run-ip-update', function (e) {
+    $(document).on('click', '.ggc-run-ip-update-btn', function (e) {
         e.preventDefault();
         const $btn = $(this);
         const ajaxUrl = (typeof ggcSettings !== 'undefined' && ggcSettings.ajax_url) ? ggcSettings.ajax_url : (window.ajaxurl || '/wp-admin/admin-ajax.php');
         const nonce = (typeof ggcSettings !== 'undefined' && ggcSettings.run_update_nonce) ? ggcSettings.run_update_nonce : $btn.data('nonce');
 
-        $btn.prop('disabled', true).text('更新中...');
+        // Disable all update buttons
+        $('.ggc-run-ip-update-btn').prop('disabled', true).text('更新中...');
+
         // show loading modal
         showLoadingModal();
 
         $.post(ajaxUrl, { action: 'ggc_run_ip_update', nonce: nonce }, function (resp) {
-            $btn.prop('disabled', false).text('今すぐ IP 更新を強制実行する');
+            $('.ggc-run-ip-update-btn').prop('disabled', false).text('今すぐ IP 更新を強制実行する');
             $('.ggc-ip-update-modal').remove();
             if (resp && resp.success) {
                 try {
@@ -63,7 +75,7 @@ jQuery(document).ready(function ($) {
                 alert(msg);
             }
         }).fail(function (jqxhr, textStatus, errorThrown) {
-            $btn.prop('disabled', false).text('今すぐ IP 更新を強制実行する');
+            $('.ggc-run-ip-update-btn').prop('disabled', false).text('今すぐ IP 更新を強制実行する');
             $('.ggc-ip-update-modal').remove();
             alert('通信エラー: ' + (errorThrown || textStatus));
         });

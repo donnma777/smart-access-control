@@ -162,30 +162,6 @@ function ggc_get_default_bots() {
     ];
 }
 
-/**
- * 初期 IPアドレス範囲 定義リスト (自動更新対象)
- * @return array
- */
-function ggc_get_default_ip_ranges() {
-    return [
-        'Google_IP_Range' => [
-            'ranges' => [],
-            'label' => 'Google クローラー IP範囲',
-            'description' => 'Googlebotの正式なIPアドレス範囲。',
-            'source_url' => 'https://developers.google.com/search/apis/ipranges/googlebot.json',
-            'allow_placeholder' => true,
-            'is_auto' => true,
-        ],
-        'GPTBot_IP_Range' => [
-            'ranges' => [],
-            'label' => 'GPTBot (OpenAI) IP範囲',
-            'description' => 'OpenAIのGPTBot学習用クローラーのIPアドレス。',
-            'source_url' => 'https://openai.com/gptbot.json',
-            'allow_placeholder' => true,
-            'is_auto' => true,
-        ],
-    ];
-}
 
 /**
  * 初期 不正UAパターン 定義リスト
@@ -274,5 +250,50 @@ function ggc_get_default_browser_patterns() {
             'group_label' => 'その他のボット',
             'description' => 'モバイルアプリ等からの不明なアクセス。',
         ]
+    ];
+}
+
+/**
+ * 初期 IPアドレス範囲 定義リスト (自動更新対象)
+ * @return array
+ */
+function ggc_get_default_ip_ranges() {
+    return [
+        'Google_IP_Range' => [
+            'ranges' => [],
+            'label' => 'Google クローラー IP範囲',
+            'group_label' => '検索エンジン',
+            'description' => 'Googlebotの正式なIPアドレス範囲。',
+            'source_url' => 'https://developers.google.com/search/apis/ipranges/googlebot.json',
+            'allow_placeholder' => true,
+            'is_auto' => true,
+        ],
+        'Bing_IP_Range' => [
+            'ranges' => [],
+            'label' => 'Bing (Microsoft) IP範囲',
+            'group_label' => '検索エンジン',
+            'description' => 'BingbotのIPアドレス範囲。',
+            'source_url' => 'https://www.bing.com/toolbox/bingbot.json',
+            'allow_placeholder' => true,
+            'is_auto' => true,
+        ],
+    ];
+}
+
+/**
+ * 初期 IPアドレス範囲 定義リスト2 (自動更新対象)
+ * @return array
+ */
+function ggc_get_default_ip_ranges_2() {
+    return [
+        'GPTBot_IP_Range_2' => [
+            'ranges' => [],
+            'label' => 'GPTBot (OpenAI) IP範囲',
+            'group_label' => 'AI / LLM',
+            'description' => 'OpenAIのGPTBot学習用クローラーのIPアドレス。',
+            'source_url' => 'https://openai.com/gptbot.json',
+            'allow_placeholder' => true,
+            'is_auto' => true,
+        ],
     ];
 }
