@@ -518,19 +518,30 @@ class Custom_Crawler_Core {
         $ua_mode = get_post_meta($post_id, '_ggc_ua_control_mode', true);
         $ip_mode = get_post_meta($post_id, '_ggc_ip_control_mode', true);
 
+        // Global Settings
+        $global_ua_option = get_option('ggc_global_user_agent_control', 'apply_new_posts');
+        $global_ip_option = get_option('ggc_global_ip_evaluation', 'apply_new_posts');
+
         // Resolve Global Defaults / Legacy 'individual'
-        if (empty($ua_mode) || $ua_mode === 'global') {
-            $global_ua = get_option('ggc_global_user_agent_control', 'apply_new_posts');
-            $ua_mode = ($global_ua === 'apply_new_posts') ? 'blacklist' : 'none';
-        } elseif ($ua_mode === 'individual') {
-            $ua_mode = 'blacklist';
+        // If global setting is 'none', it overrides individual settings (Global Priority)
+        if ($global_ua_option === 'none') {
+            $ua_mode = 'none';
+        } else {
+            if (empty($ua_mode) || $ua_mode === 'global') {
+                $ua_mode = 'blacklist';
+            } elseif ($ua_mode === 'individual') {
+                $ua_mode = 'blacklist';
+            }
         }
 
-        if (empty($ip_mode) || $ip_mode === 'global') {
-            $global_ip = get_option('ggc_global_ip_evaluation', 'apply_new_posts');
-            $ip_mode = ($global_ip === 'apply_new_posts') ? 'blacklist' : 'none';
-        } elseif ($ip_mode === 'individual') {
-            $ip_mode = 'blacklist';
+        if ($global_ip_option === 'none') {
+            $ip_mode = 'none';
+        } else {
+            if (empty($ip_mode) || $ip_mode === 'global') {
+                $ip_mode = 'blacklist';
+            } elseif ($ip_mode === 'individual') {
+                $ip_mode = 'blacklist';
+            }
         }
 
         // 2. User-Agent Evaluation
