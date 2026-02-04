@@ -42,7 +42,7 @@ function ggc_get_default_bots() {
 
         // --- Claude ---
         'Other_AI_LLM' => [
-            'uas' => ['ClaudeBot','ClaudeBot'],
+            'uas' => ['ClaudeBot', 'Claude-SearchBot', 'Claude-User'],
             'label' => 'Anthropic Claude',
             'group_label' => '2. 主要AI / LLM クローラー',
             'description' => 'Anthropic社のClaude AIによるデータ収集クローラー。',
@@ -62,6 +62,14 @@ function ggc_get_default_bots() {
             'label' => 'Bing (Microsoft 検索 & 広告)',
             'group_label' => '3. Microsoft / Bing',
             'description' => 'Bingのコア検索クローラー、広告ボットを含みます。',
+        ],
+
+        // --- Baidu ---
+        'Baidu' => [
+            'uas' => ['Baiduspider'],
+            'label' => 'Baiduspider (Baidu 検索)',
+            'group_label' => '3. 検索エンジン',
+            'description' => 'Baidu の検索クローラー。',
         ],
 
         // --- X / Grok ---
@@ -118,6 +126,14 @@ function ggc_get_default_bots() {
             'label' => 'Pinterest (画像共有)',
             'group_label' => '4. SNS / プレビュー系',
             'description' => 'Pinterest の画像収集クローラー。',
+        ],
+
+        // --- LINE ---
+        'LINE' => [
+            'uas' => ['Linespider'],
+            'label' => 'LINE (リンク展開)',
+            'group_label' => '4. SNS / プレビュー系',
+            'description' => 'LINE のリンクプレビュー用クローラー。',
         ],
 
         // --- LINE（参考：不定だが対応可能） ---
@@ -259,12 +275,21 @@ function ggc_get_default_browser_patterns() {
  */
 function ggc_get_default_ip_ranges() {
     return [
-        'Google_IP_Range' => [
+        'Google_IP_Range_1' => [
             'ranges' => [],
-            'label' => 'Google クローラー IP範囲',
+            'label' => 'Google IP範囲',
             'group_label' => '検索エンジン',
             'description' => 'Googlebotの正式なIPアドレス範囲。',
             'source_url' => 'https://developers.google.com/search/apis/ipranges/googlebot.json',
+            'allow_placeholder' => true,
+            'is_auto' => true,
+        ],
+            'Google_IP_Range_2' => [
+            'ranges' => [],
+            'label' => 'Google IP範囲',
+            'group_label' => '検索エンジン・AI / LLM',
+            'description' => 'Googlebot、ユーザーがウェブページを開くように要求したときのGeminiのチャット。',
+            'source_url' => 'https://developers.google.com/static/search/apis/ipranges/googlebot.json',
             'allow_placeholder' => true,
             'is_auto' => true,
         ],
@@ -286,12 +311,30 @@ function ggc_get_default_ip_ranges() {
  */
 function ggc_get_default_ip_ranges_2() {
     return [
-        'GPTBot_IP_Range_2' => [
+        'GPTBot_IP_Range_1' => [
             'ranges' => [],
             'label' => 'GPTBot (OpenAI) IP範囲',
             'group_label' => 'AI / LLM',
             'description' => 'OpenAIのGPTBot学習用クローラーのIPアドレス。',
             'source_url' => 'https://openai.com/gptbot.json',
+            'allow_placeholder' => true,
+            'is_auto' => true,
+        ], 
+        'GPTBot_IP_Range_2' => [
+            'ranges' => [],
+            'label' => 'GPTuserBot (OpenAI) IP範囲',
+            'group_label' => 'AI / LLM',
+            'description' => 'ChatGPTのユーザーボットのIPアドレス。',
+            'source_url' => 'https://openai.com/chatgpt-user.json',
+            'allow_placeholder' => true,
+            'is_auto' => true,
+        ],
+        'OpenAI_SearchBot_IP_Range' => [
+            'ranges' => [],
+            'label' => 'SearchBot (OpenAI) IP範囲',
+            'group_label' => 'AI / LLM',
+            'description' => 'OpenAIのSearchBotクローラーのIPアドレス。',
+            'source_url' => 'https://openai.com/searchbot.json',
             'allow_placeholder' => true,
             'is_auto' => true,
         ],

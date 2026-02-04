@@ -515,32 +515,61 @@ class Custom_Crawler_Core {
         $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
 
         // 1. Determine Modes
-        $ua_mode = get_post_meta($post_id, '_ggc_ua_control_mode', true);
-        $ip_mode = get_post_meta($post_id, '_ggc_ip_control_mode', true);
+        $post_ua_mode = get_post_meta($post_id, '_ggc_ua_control_mode', true);
+        $post_ip_mode = get_post_meta($post_id, '_ggc_ip_control_mode', true);
 
         // Global Settings
         $global_ua_option = get_option('ggc_global_user_agent_control', 'apply_new_posts');
         $global_ip_option = get_option('ggc_global_ip_evaluation', 'apply_new_posts');
 
-        // Resolve Global Defaults / Legacy 'individual'
-        // If global setting is 'none', it overrides individual settings (Global Priority)
+        // Determine final mode with global priority (設定画面優先)
+        // If global setting is not 'apply_new_posts', use global setting (global priority)
         if ($global_ua_option === 'none') {
             $ua_mode = 'none';
+        } elseif ($global_ua_option === 'global_blacklist') {
+            $ua_mode = 'blacklist';
+        } elseif ($global_ua_option === 'global_whitelist') {
+            $ua_mode = 'whitelist';
         } else {
+            // 'apply_new_posts' の場合、投稿画面の設定を使用
+            $ua_mode = $post_ua_mode;
             if (empty($ua_mode) || $ua_mode === 'global') {
                 $ua_mode = 'blacklist';
             } elseif ($ua_mode === 'individual') {
                 $ua_mode = 'blacklist';
             }
+            // ただし、投稿画面で 'deny_all' が設定されている場合、グローバルホワイトリスト設定があればそれを優先
+            if ($ua_mode === 'deny_all') {
+                $global_selected_crawlers = get_option('ggc_global_selected_crawlers', []);
+                if (!empty($global_selected_crawlers)) {
+                    // グローバルホワイトリストが登録されている場合は、ホワイトリストを優先
+                    $ua_mode = 'whitelist';
+                }
+            }
         }
 
         if ($global_ip_option === 'none') {
             $ip_mode = 'none';
+        } elseif ($global_ip_option === 'global_blacklist') {
+            $ip_mode = 'blacklist';
+        } elseif ($global_ip_option === 'global_whitelist') {
+            $ip_mode = 'whitelist';
         } else {
+            // 'apply_new_posts' の場合、投稿画面の設定を使用
+            $ip_mode = $post_ip_mode;
             if (empty($ip_mode) || $ip_mode === 'global') {
                 $ip_mode = 'blacklist';
             } elseif ($ip_mode === 'individual') {
                 $ip_mode = 'blacklist';
+            }
+            // ただし、投稿画面で 'deny_all' が設定されている場合、グローバルホワイトリスト設定があればそれを優先
+            if ($ip_mode === 'deny_all') {
+                $global_selected_ips = get_option('ggc_global_selected_ips', []);
+                $global_selected_ips_2 = get_option('ggc_global_selected_ips_2', []);
+                if (!empty($global_selected_ips) || !empty($global_selected_ips_2)) {
+                    // グローバルホワイトリストが登録されている場合は、ホワイトリストを優先
+                    $ip_mode = 'whitelist';
+                }
             }
         }
 
@@ -553,7 +582,12 @@ class Custom_Crawler_Core {
             $message_ua = 'アクセス禁止：このページはすべてのUser-Agentを拒否しています。';
         } elseif ($ua_mode === 'blacklist' || $ua_mode === 'whitelist') {
 
-            $selected_crawlers = get_post_meta($post_id, '_ggc_selected_crawlers', true) ?: [];
+            // Use global selected crawlers if global mode is set to global_blacklist/global_whitelist
+            if (in_array($global_ua_option, ['global_blacklist','global_whitelist'], true)) {
+                $selected_crawlers = get_option('ggc_global_selected_crawlers', []) ?: [];
+            } else {
+                $selected_crawlers = get_post_meta($post_id, '_ggc_selected_crawlers', true) ?: [];
+            }
             $selected_page_pattern_keys = get_post_meta($post_id, '_ggc_selected_page_browser_patterns', true) ?: [];
 
             $is_match = false;
@@ -614,8 +648,14 @@ class Custom_Crawler_Core {
             $should_block_ip = true;
             $message_ip = 'アクセス禁止：このページはすべてのIPアドレスを拒否しています。';
         } elseif ($ip_mode === 'blacklist' || $ip_mode === 'whitelist') {
-            $selected_ips = get_post_meta($post_id, '_ggc_selected_ips', true) ?: [];
-            $selected_ips_2 = get_post_meta($post_id, '_ggc_selected_ips_2', true) ?: [];
+            // Use global selected IPs if global mode is global_blacklist/global_whitelist
+            if (in_array($global_ip_option, ['global_blacklist','global_whitelist'], true)) {
+                $selected_ips = get_option('ggc_global_selected_ips', []) ?: [];
+                $selected_ips_2 = get_option('ggc_global_selected_ips_2', []) ?: [];
+            } else {
+                $selected_ips = get_post_meta($post_id, '_ggc_selected_ips', true) ?: [];
+                $selected_ips_2 = get_post_meta($post_id, '_ggc_selected_ips_2', true) ?: [];
+            }
             $all_selected_ips = array_merge($selected_ips, $selected_ips_2);
 
             $is_in_range = false;
