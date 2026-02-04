@@ -69,7 +69,9 @@
 /* 開いている状態でのみ、必要なパディングを設定 */
 .ggc-group-content.open {
     padding-bottom: 10px;
-    max-height: 100%;
+    /* allow content to expand naturally so parent panel can scroll */
+    max-height: none;
+    overflow: visible;
     /* marginやpaddingはtransitionの対象外なので、openクラスでのみ設定 */
 }
 
@@ -98,4 +100,48 @@
     margin-right: 5px;
     margin-top: -1px;
     vertical-align: middle;
+}
+
+/* Media-specific panels: ensure scroll appears for media UA/IP lists */
+#ggc-media-ua-list-wrapper .ggc-panel,
+#ggc-media-ip-list-wrapper .ggc-panel {
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Fallback: ensure attached media list is scrollable */
+#ggc-control-panel>div .attached-media-list,
+#ggc-control-panel .attached-media-list {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+/* Live preview styles */
+.ggc-live-preview {
+    background: #fff;
+}
+
+.ggc-alt-replacement {
+    display: inline-block;
+    padding: 2px 6px;
+    background: #f6f6f6;
+    border: 1px dashed #ddd;
+    color: #333;
+    font-style: italic;
+}
+
+.ggc-featured-placeholder {
+    background: #fffef6;
+    padding: 6px;
+    border-left: 4px solid #ffd;
+}
+
+/* Block editor notice */
+.ggc-block-note {
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    font-size: 13px;
 }

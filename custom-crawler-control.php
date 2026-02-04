@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Smart Access Control アクセス制御
  * Description: アクセスを精密に制御する管理者向けプラグイン。Advanced access control plugin for administrators.
- * Version: 2.0.0
+ * Version: 3.0.0
  * Text Domain: custom-crawler-control
  * Requires at least: 4.9+
  * Requires PHP: 7.0+
@@ -37,6 +37,9 @@
 
     // 投稿編集画面メタボックス (admin/パスで読み込む)
     require_once plugin_dir_path(__FILE__) . 'admin/class-post-metabox.php';
+
+    // メディア編集用メタとコンテンツフィルタ
+    require_once plugin_dir_path(__FILE__) . 'admin/class-media-meta.php';
 
     // --------------------------------------------------------
     // 3. プラグインの実行

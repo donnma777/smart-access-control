@@ -43,6 +43,78 @@ jQuery(document).ready(function ($) {
         $('#ggc-ip-ranges-tbody-2').append(newRowHtml);
     });
 
+    // ----------------------------------------------------------------------
+    // 4. Global select change -> show/hide lists dynamically
+    // ----------------------------------------------------------------------
+    function updateGlobalListsVisibility() {
+        const uaMode = $('#ggc_global_user_agent_control_select').val();
+        const ipMode = $('#ggc_global_ip_evaluation_select').val();
+        const mediaUaMode = $('#ggc_global_media_user_agent_control_select').length ? $('#ggc_global_media_user_agent_control_select').val() : null;
+        const mediaIpMode = $('#ggc_global_media_ip_evaluation_select').length ? $('#ggc_global_media_ip_evaluation_select').val() : null;
+
+        // User-Agent-ページ
+        if (uaMode === 'global_blacklist' || uaMode === 'global_whitelist') {
+            $('#ggc-global-ua-list').show();
+            // 説明テキストを更新
+            const $desc = $('#ggc-global-ua-list p:first');
+            if (uaMode === 'global_whitelist') {
+                $desc.html('<strong>ホワイトリスト : チェックしたUser-Agentをアクセス許可します。</strong>');
+            } else {
+                $desc.html('<strong>ブラックリスト : チェックしたUser-Agentをアクセス拒否します。</strong>');
+            }
+        } else {
+            $('#ggc-global-ua-list').hide();
+        }
+
+        // IPアドレス-ページ
+        if (ipMode === 'global_blacklist' || ipMode === 'global_whitelist') {
+            $('#ggc-global-ip-list').show();
+            // 説明テキストを更新
+            const $desc = $('#ggc-global-ip-list p:first');
+            if (ipMode === 'global_whitelist') {
+                $desc.html('<strong>ホワイトリスト : チェックしたIP範囲をアクセス許可します。</strong>');
+            } else {
+                $desc.html('<strong>ブラックリスト : チェックしたIP範囲をアクセス拒否します。</strong>');
+            }
+        } else {
+            $('#ggc-global-ip-list').hide();
+        }
+
+        // User-Agent-メディア
+        if (mediaUaMode === 'global_blacklist' || mediaUaMode === 'global_whitelist') {
+            $('#ggc-global-media-ua-list').show();
+            // 説明テキストを更新
+            const $desc = $('#ggc-global-media-ua-list p:first');
+            if (mediaUaMode === 'global_whitelist') {
+                $desc.html('<strong>ホワイトリスト : チェックしたUser-Agentは表示、それ以外は代替テキスト表示します。</strong>');
+            } else {
+                $desc.html('<strong>ブラックリスト : チェックしたUser-Agentは代替テキスト表示、それ以外はメディア表示します。</strong>');
+            }
+        } else {
+            $('#ggc-global-media-ua-list').hide();
+        }
+
+        // IPアドレス-メディア
+        if (mediaIpMode === 'global_blacklist' || mediaIpMode === 'global_whitelist') {
+            $('#ggc-global-media-ip-list').show();
+            // 説明テキストを更新
+            const $desc = $('#ggc-global-media-ip-list p:first');
+            if (mediaIpMode === 'global_whitelist') {
+                $desc.html('<strong>ホワイトリスト : チェックしたIP範囲はメディア表示、それ以外は代替テキスト表示します。</strong>');
+            } else {
+                $desc.html('<strong>ブラックリスト : チェックしたIP範囲は代替テキスト表示、それ以外はメディア表示します。</strong>');
+            }
+        } else {
+            $('#ggc-global-media-ip-list').hide();
+        }
+    }
+
+    // Bind events and run initially
+    $(document).on('change', '#ggc_global_user_agent_control_select, #ggc_global_ip_evaluation_select, #ggc_global_media_user_agent_control_select, #ggc_global_media_ip_evaluation_select', function () {
+        updateGlobalListsVisibility();
+    });
+    updateGlobalListsVisibility();
+
     $(document).on('click', '.ggc-remove-ip', function () {
         $(this).closest('tr').remove();
     });
@@ -199,5 +271,11 @@ jQuery(document).ready(function ($) {
     $(document).on('click', '.ggc-remove-pattern', function () {
         $(this).closest('tr').remove();
     });
+
+    // テキストボックスを常に有効化
+    const $textbox = $('#ggc_alt_fixed_text');
+    if ($textbox.length) {
+        $textbox.prop('disabled', false);
+    }
 
 });

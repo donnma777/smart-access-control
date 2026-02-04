@@ -30,6 +30,8 @@ class Custom_Admin_Settings {
         add_action('admin_enqueue_scripts', [ $this, 'enqueue_admin_scripts' ]);
         // IP更新強制実行フック
         add_action('admin_action_run_ggc_ip_update', [ $this, 'admin_action_run_ggc_ip_update' ]);
+        // 全データクリア
+        add_action('admin_post_ggc_clear_all_data', [ $this, 'admin_action_clear_all_data' ]);
         // 行ごとの保存は UX を単純化するため撤廃（フルページ保存を利用）
         // (デバッグ用 AJAX は削除済み)
         // IP更新通知
@@ -39,6 +41,7 @@ class Custom_Admin_Settings {
         add_action('admin_notices', [ $this, 'admin_notice_invalid_ip_ranges_on_save' ]);
         // リセット完了通知
         add_action('admin_notices', [ $this, 'admin_notice_reset_success' ]);
+        add_action('admin_notices', [ $this, 'admin_notice_clear_all_success' ]);
         // AJAX endpoint for async update
         add_action('wp_ajax_ggc_run_ip_update', [ $this, 'ajax_run_ip_update' ]);
         // AJAX endpoint for parsing a provided source_url
@@ -78,30 +81,6 @@ class Custom_Admin_Settings {
             'ajax_url' => admin_url('admin-ajax.php'),
             'run_update_nonce' => wp_create_nonce('ggc_run_update_nonce'),
         ]);
-
-        // small inline marker to help debug when JS isn't being loaded
-        add_action('admin_footer', function() use ($hook) {
-            echo "<script>console.log('ggc-enqueue-hook-arg: " . esc_js($hook) . "');</script>";
-            $screen = get_current_screen();
-            if ($screen && $screen->id === 'settings_page_ggc-crawler-definitions') {
-                echo "<script>console.log('ggc-settings-hook: admin footer marker');</script>";
-            }
-        });
-
-        // Additional debug: print the resolved script URL and whether a matching <script> element exists,
-        // and whether WP thinks the script is registered/enqueued. Also output concat/debug constants and queue.
-        add_action('admin_footer', function() {
-            $plugin_url = plugin_dir_url(dirname(__DIR__) . '/custom-crawler-control.php');
-            $script_url = $plugin_url . 'js/admin-settings.js';
-            $registered = wp_script_is('ggc-settings-js', 'registered') ? 'true' : 'false';
-            $enqueued = wp_script_is('ggc-settings-js', 'enqueued') ? 'true' : 'false';
-            $concat = defined('CONCATENATE_SCRIPTS') && CONCATENATE_SCRIPTS ? 'true' : 'false';
-            $script_debug = defined('SCRIPT_DEBUG') && SCRIPT_DEBUG ? 'true' : 'false';
-            global $wp_scripts;
-            $queue = isset($wp_scripts->queue) ? $wp_scripts->queue : [];
-        });
-
-
 
     }
 
@@ -183,6 +162,25 @@ class Custom_Admin_Settings {
         // Added new global settings for User-Agent and IP address evaluation
         register_setting('ggc_general_option_group', 'ggc_global_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
         register_setting('ggc_general_option_group', 'ggc_global_ip_evaluation', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
+
+        // Media-specific global settings (separate from page-level globals)
+        register_setting('ggc_general_option_group', 'ggc_global_media_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
+        register_setting('ggc_general_option_group', 'ggc_global_media_ip_evaluation', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
+
+        // Global selection lists when using global blacklist/whitelist (page-level)
+        register_setting('ggc_general_option_group', 'ggc_global_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_selected_ips', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_selected_ips_2', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
+
+        // Global selection lists for media when using global blacklist/whitelist (media-level)
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_ips', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_ips_2', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
+
+        // Alt text behavior for excluded media: none | individual | fixed
+        register_setting('ggc_general_option_group', 'ggc_alt_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_alt_fixed_text', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_alt_fixed_text_featured', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
     }
 
     // --------------------------------------------------------
@@ -222,6 +220,17 @@ class Custom_Admin_Settings {
             ];
         }
         return $new_input;
+    }
+
+    // Sanitize functions for global selected lists
+    public function sanitize_global_selected_crawlers($input) {
+        if (!is_array($input)) return [];
+        return array_values(array_map('sanitize_key', array_filter($input)));
+    }
+
+    public function sanitize_global_selected_ips($input) {
+        if (!is_array($input)) return [];
+        return array_values(array_map('sanitize_key', array_filter($input)));
     }
 
     /**
@@ -476,6 +485,7 @@ class Custom_Admin_Settings {
                     <li><strong>robots.txt やサーバー設定が優先されます:</strong> robots.txt、Webサーバー設定（Apache/Nginx）、WAF、CDNなどで拒否されているアクセスは、本プラグインに到達する前にブロックされます。</li>
                     <li><strong>PHPが実行されないアクセスは制御できません:</strong> 画像ファイル、CSS、JSなどの静的ファイルへの直接アクセスや、キャッシュプラグイン（WP Super Cacheなど）によって生成された静的HTMLへのアクセスは、PHPを経由しないため制御できません。<br>
                     <strong>対策:</strong> 会員限定ページなど重要なページでは、キャッシュプラグインの除外設定を行ってください。</li>
+                    <li><strong>表示するブラウザのキャッシュが残っている場合、ページが表示されたり、画像が表示されたままになる事があります。</li>
                 </ul>
 
                 <h4 style="margin-bottom: 5px;">2. 完全なブロックの保証はありません</h4>
@@ -520,43 +530,96 @@ class Custom_Admin_Settings {
                 </tbody>
             </table>
 
-            <h4>Step 2: 投稿・固定ページでの適用</h4>
-            <p>記事の投稿画面（または固定ページの編集画面）のサイドバーにある「アクセス制御」ボックスで設定を行います。</p>
-            <ol>
-                <li><strong>User-Agent の評価:</strong>
-                    <ul>
-                        <li><strong>グローバル設定に従う:</strong> 「一般設定」タブでの設定（新規投稿に適用するかどうか）に従います。</li>
-                        <li><strong>ブラックリスト:</strong> 下のリストでチェックを入れたボットやパターンを<strong>拒否</strong>します。</li>
-                        <li><strong>ホワイトリスト:</strong> 下のリストでチェックを入れたボットのみを<strong>許可</strong>し、それ以外（一般的なブラウザ含む）を拒否します。</li>
-                        <li><strong>全許可:</strong> リストに関係なく、すべてのUAを許可します。</li>
-                        <li><strong>全拒否:</strong> リストに関係なく、すべてのUAを拒否します。</li>
-                    </ul>
-                    </ul>
-                </li>
-                <li><strong>IPアドレスの評価:</strong>
-                    <ul>
-                        <li><strong>グローバル設定に従う:</strong> 「一般設定」タブでの設定（新規投稿に適用するかどうか）に従います。</li>
-                        <li><strong>ブラックリスト:</strong> チェックを入れたIP範囲からのアクセスを<strong>拒否</strong>します。</li>
-                        <li><strong>ホワイトリスト:</strong> チェックを入れたIP範囲からのアクセスのみを<strong>許可</strong>します（社内限定公開などに便利です）。</li>
-                        <li><strong>全許可:</strong> すべてのIPアドレスを許可します。</li>
-                        <li><strong>全拒否:</strong> すべてのIPアドレスを拒否します。</li>
-                    </ul>
-                </li>
-            </ol>
+            <h4>Step 2: 設定画面の一般設定</h4>
+            <p>まず「一般設定」タブでグローバル設定を決めます。ここでの選択が投稿画面、固定ページより<strong>優先</strong>されます。</p>
+            <ul>
+                <li><strong>グローバル設定 User-Agent-ページ : </strong>User-Agentでアクセス制限の設定を行います。</li>
+                <li><strong>グローバル設定 IPアドレスの評価-ページ : </strong>IPアドレスでアクセス制限の設定を行います。</li>
+                <li><strong>グローバル設定 User-Agent-メディア : </strong>User-Agentでメディア制御の設定を行います。</li>
+                <li><strong>グローバル設定 IPアドレスの評価-メディア : </strong>IPアドレスでメディア制御の設定を行います。</li>
+                <li><strong>アイキャッチ画像の代替テキスト（ブラックリスト/ホワイトリスト使用時）: </strong>グローバル設定でブラックリスト、ホワイトリスト設定した場合にアイキャッチ画像を代替テキストにします。</li>
+                <Li><strong>代替テキスト（ブラックリスト/ホワイトリスト使用時）: </strong>グローバル設定でブラックリスト、ホワイトリスト設定した場合にメディアを代替テキストにします。</li>
+                <li><strong>IPアドレスの自動更新頻度 : </strong>IPアドレス範囲の自動更新の頻度を設定します。</li>
+                <li><strong>おすすめ設定のインポート : </strong>設定の推奨値をインポートします。</li>
+                <li><strong>全データのクリア : </strong>すべての設定データを初期化します。プラグインのアップデートやトラブルシューティング時に使用してください。</li>
+            </ul>
+
+            <h4>Step 3: 投稿・固定ページでの適用</h4>
+            <p>記事の投稿画面（または固定ページの編集画面）のサイドバーにある「アクセス制御」ボックスで設定します。</p>
+            <ul>
+                <li><strong>User-Agent の評価-ページ / IPアドレスの評価-ページ : </strong> アクセス制限の設定を行います。</li>
+                <li><strong>User-Agent の評価 - メディア / IPアドレスの評価 - メディア : </strong> メディアを代替テキストに置換する設定を行います。</li>
+                <li><strong>アイキャッチ画像の代替テキスト : </strong>アイキャッチ画像の代替テキストを置換する設定を行います。空欄の場合は置換しません。</li>
+                <li><strong>代替テキスト : </strong>「メディア選択」→「ブロック」→「アクセス制限」内の「代替えテキスト」入力でメディアを代替テキストに置換します。空欄の場合は置換しません。メディア単位で設定可能です。</li>
+            </ul>
 
             <hr>
 
             <h3>2. 判定の優先順位とロジック</h3>
             <p>アクセスがあった際、以下の順序で評価が行われます。どちらかで「拒否」と判定された時点でアクセスはブロックされます。</p>
             <ol>
-                <li><strong>グローバル設定（一般設定）の優先:</strong>
+                <li><strong>グローバル設定の優先:</strong>
                     <ul>
-                        <li>「一般設定」タブで「アクセス制御設定を適用しない」を選択している場合、記事ごとの設定（ブラックリスト/ホワイトリスト等）に関わらず、<strong>すべてのアクセス制御が無効化</strong>されます。</li>
-                        <li>「新規投稿で適用」を選択している場合、記事ごとの設定が優先されます。</li>
+                        <li>「グローバル設定」は設定画面の「一般設定」タブで決定されます。</li>    
+                        <li>「グローバル設定」＞「投稿ページ・固定ページ」の優先度で制御が行われます。</li>                
                     </ul>
                 </li>
-                <li><strong>User-Agent 評価:</strong> ブラウザ名（User-Agent）がブラックリストに一致するか、またはホワイトリストに含まれていない場合、即座にブロックされます。</li>
-                <li><strong>IPアドレス 評価:</strong> UA評価を通過した場合、次にIPアドレスが評価されます。IPがブラックリストに一致するか、ホワイトリストに含まれていない場合、ブロックされます。</li>
+                <li><strong> User-Agent-ページ/IPアドレスの評価-ページ:</strong>
+                    <ul>
+                        <li>「一般設定」タブで「アクセス制御設定を適用しない」を選択している場合、投稿ページ、固定ページごとの設定（ブラックリスト/ホワイトリスト等）に関わらず、<strong>すべてのアクセス制御が無効化</strong>されます。</li>
+                        <li>「一般設定」タブで「アクセス制限を新規投稿で適用」を選択している場合のみ、記事ごとの設定が優先されます。</li>
+                        <li>「一般設定」タブで「全ページでブラックリスト」/「全ページでホワイトリスト」を選択している場合は、設定画面のリストが常に優先されます。</li>
+                    </ul>
+                </li>
+                <li><strong> User-Agent-メディア/ IPアドレスの評価-メディア:</strong>
+                    <ul>
+                        <li>「一般設定」タブで「メディア制御設定を適用しない」を選択している場合、投稿ページ、固定ページごとの設定（ブラックリスト/ホワイトリスト等）に関わらず、<strong>すべてのメディア制御が無効化</strong>されます。</li>
+                        <li>「一般設定」タブで「メディア制限を新規投稿で適用」を選択している場合のみ、記事ごとの設定が優先されます。</li>
+                        <li>「一般設定」タブで「全ページでブラックリスト」/「全ページでホワイトリスト」を選択している場合は、設定画面のリストが常に優先されます。</li>
+                    </ul>
+                </li>
+
+                <li><strong>User-Agent 評価:</strong> ブラウザ名（User-Agent）が一致した場合に評価されます。</li>
+                <li><strong>IPアドレス 評価:</strong> UA評価を通過した場合、次にIPアドレスが評価されます。</li>
+
+                <li><strong>各モードの適用範囲:</strong>
+                    <table class="widefat striped" style="margin-top:6px; max-width: 820px;">
+                        <thead>
+                            <tr>
+                                <th style="width: 18%;">モード</th>
+                                <th style="width: 42%;">モードの解説</th>
+                                <th style="width: 20%;">ページ</th>
+                                <th style="width: 20%;">メディア</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>ブラックリスト</strong></td>
+                                <td>一致したものを拒否、それ以外は許可</td>
+                                <td>選択したものをアクセス制限、それ以外は許可します。</td>
+                                <td>選択したものをメディアを代替テキストに変更。それ以外はメディアを表示します。</td>
+                            </tr>
+                            <tr>
+                                <td><strong>ホワイトリスト</strong></td>
+                                <td>一致したものだけ許可、それ以外は拒否</td>
+                                <td>選択したものだけアクセス許可、それ以外は拒否します。</td>
+                                <td>選択したものはメディアを表示、それ以外は代替テキストに変更します。</td>
+                            </tr>
+                            <tr>
+                                <td><strong>全許可</strong></td>
+                                <td>すべて許可（評価なし）</td>
+                                <td>アクセス制限をしません。</td>
+                                <td>メディアを表示します。</td>
+                            </tr>
+                            <tr>
+                                <td><strong>全拒否</strong></td>
+                                <td>すべて拒否（評価なし）</td>
+                                <td>アクセス制限をします。</td>
+                                <td>すべてのメディアを代替テキストに変更します。</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </li>
             </ol>
 
             <hr>
@@ -564,7 +627,7 @@ class Custom_Admin_Settings {
             <h3>3. トラブルシューティング</h3>
 
             <h4>Q. 設定を間違えてページが見られなくなりました。</h4>
-            <p>A. 管理画面（ダッシュボード）にはアクセス制御は適用されません。管理画面にログインし、該当する記事の編集画面で設定を「全許可」または「グローバル設定に従う」に戻してください。</p>
+            <p>A. 管理画面（ダッシュボード）にはアクセス制御は適用されません。管理画面にログインし、グローバル設定を「制御設定しない」にします。個別設定は、該当する記事の編集画面で「全許可」または「グローバル設定に従う」に戻してください。</p>
 
             <h4>Q. IPアドレスの自動更新が動きません。</h4>
             <p>A. 「一般設定」タブで更新頻度が「停止」になっていないか確認してください。また、「診断ツール」タブで次回の実行予定時刻を確認できます。「今すぐIP更新を強制実行する」ボタンで手動更新も可能です。</p>
@@ -586,7 +649,7 @@ class Custom_Admin_Settings {
                     </tr>
                     <tr>
                         <td><strong>バージョン</strong></td>
-                        <td>2.0.0</td>
+                        <td>3.0.0</td>
                     </tr>
                     <tr>
                         <td><strong>作者</strong></td>
@@ -627,8 +690,8 @@ class Custom_Admin_Settings {
         </p>
         <p style="margin: 0 0 8px 0;">
             投稿・固定ページ単位で、検索エンジン・AIクローラー・不正ボットのアクセスを
-            <strong>User-Agent / IPアドレス / 不正UAパターン</strong>の三層で精密に制御できる
-            管理者向け WordPress プラグインです。(完全にアクセスを防ぐ保証はありません。ご了承ください。詳しくはアプリの使い方、GitHubリポジトリをご覧ください。)
+            <strong>User-Agent / IPアドレス </strong>で精密に制御できる
+            管理者向け WordPress プラグインです。アクセス制限を行ったり、画像などのメディアをテキストに置換可能です。(完全にアクセスを防ぐ保証はありません。ご了承ください。詳しくはアプリの使い方、GitHubリポジトリをご覧ください。)
         </p>
         <p style="margin: 0;">
             🔗 GitHub : <a href="https://github.com/donnma777/smart-access-control" target="_blank" rel="noopener noreferrer">
@@ -644,33 +707,248 @@ class Custom_Admin_Settings {
 
         <table class="form-table">
             <tr>
-                <th scope="row">グローバル設定 User-Agent</th>
+                <th scope="row">グローバル設定 User-Agent-ページ</th>
                 <td>
-                    <fieldset>
-                        <label>
-                            <input type="radio" name="ggc_global_user_agent_control" value="none" <?php checked($global_ua_control, 'none'); ?>>
-                            アクセス制御設定を適用しない
-                        </label><br>
-                        <label>
-                            <input type="radio" name="ggc_global_user_agent_control" value="apply_new_posts" <?php checked($global_ua_control, 'apply_new_posts'); ?>>
-                            アクセス制御設定を新規投稿で適用
-                        </label>
-                    </fieldset>
+                    <select name="ggc_global_user_agent_control" id="ggc_global_user_agent_control_select">
+                        <option value="none" <?php selected($global_ua_control, 'none'); ?>>アクセス制御設定を適用しない</option>
+                        <option value="apply_new_posts" <?php selected($global_ua_control, 'apply_new_posts'); ?>>アクセス制御設定を新規投稿で適用</option>
+                        <option value="global_blacklist" <?php selected($global_ua_control, 'global_blacklist'); ?>>全ページでブラックリスト設定</option>
+                        <option value="global_whitelist" <?php selected($global_ua_control, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
+                    </select>
+
+                    <div id="ggc-global-ua-list" style="display: <?php echo in_array($global_ua_control, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>;">
+                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
+                            <?php echo ($global_ua_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたUser-Agentをアクセス許可します。</strong>' : '<strong>ブラックリスト : チェックしたUser-Agentをアクセス拒否します。</strong>'; ?>
+                        </p>
+                        <p style="font-size:11px; margin-top:0; font-weight:bold;">User-Agent 制御リスト（全設定）:</p>
+                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
+                            <?php
+                            $bots = Custom_Crawler_Core::get_allowable_bots();
+                            $grouped = [];
+                            foreach ($bots as $key => $b) {
+                                $group_label = $b['group_label'] ?? 'その他';
+                                if (!isset($grouped[$group_label])) $grouped[$group_label] = [];
+                                $grouped[$group_label][$key] = $b;
+                            }
+
+                            $global_selected_crawlers = get_option('ggc_global_selected_crawlers', []);
+                            if (!is_array($global_selected_crawlers)) $global_selected_crawlers = [];
+
+                            foreach ($grouped as $glabel => $bots_in_group) : ?>
+                                <h4 style="margin: 8px 0 6px; font-size:13px;"><strong><?php echo esc_html($glabel); ?></strong></h4>
+                                <?php foreach ($bots_in_group as $bkey => $bot): ?>
+                                    <label style="display:block; margin-bottom:4px;">
+                                        <input type="checkbox" name="ggc_global_selected_crawlers[]" value="<?php echo esc_attr($bkey); ?>" <?php checked(in_array(sanitize_key($bkey), $global_selected_crawlers), true); ?>>
+                                        <?php echo esc_html($bot['label']); ?>
+                                    </label>
+                                <?php endforeach; ?>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
                 </td>
             </tr>
             <tr>
-                <th scope="row">グローバル設定 IPアドレスの評価</th>
+                <th scope="row">グローバル設定 IPアドレスの評価-ページ</th>
                 <td>
-                    <fieldset>
-                        <label>
-                            <input type="radio" name="ggc_global_ip_evaluation" value="none" <?php checked($global_ip_evaluation, 'none'); ?>>
-                            アクセス制御設定を適用しない
-                        </label><br>
-                        <label>
-                            <input type="radio" name="ggc_global_ip_evaluation" value="apply_new_posts" <?php checked($global_ip_evaluation, 'apply_new_posts'); ?>>
-                            アクセス制御設定を新規投稿で適用
-                        </label>
-                    </fieldset>
+                    <select name="ggc_global_ip_evaluation" id="ggc_global_ip_evaluation_select">
+                        <option value="none" <?php selected($global_ip_evaluation, 'none'); ?>>アクセス制御設定を適用しない</option>
+                        <option value="apply_new_posts" <?php selected($global_ip_evaluation, 'apply_new_posts'); ?>>アクセス制御設定を新規投稿で適用</option>
+                        <option value="global_blacklist" <?php selected($global_ip_evaluation, 'global_blacklist'); ?>>全ページでブラックリスト設定</option>
+                        <option value="global_whitelist" <?php selected($global_ip_evaluation, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
+                    </select>
+
+                    <div id="ggc-global-ip-list" style="display: <?php echo in_array($global_ip_evaluation, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>;">
+                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
+                            <?php echo ($global_ip_evaluation === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたIP範囲をアクセス許可します。</strong>' : '<strong>ブラックリスト : チェックしたIP範囲をアクセス拒否します。</strong>'; ?>
+                        </p>
+                        <p style="font-size:11px; margin-top:0; font-weight:bold;">IPアドレス制御リスト（全設定）:</p>
+                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
+                            <?php
+                            $ip_ranges_1 = get_option('ggc_ip_range_definitions', []);
+                            $ip_ranges_2 = get_option('ggc_ip_range_definitions_2', []);
+
+                            $grouped1 = [];
+                            foreach ($ip_ranges_1 as $k => $def) {
+                                $label = $def['group_label'] ?? 'その他';
+                                if (!isset($grouped1[$label])) $grouped1[$label] = [];
+                                $grouped1[$label][$k] = $def;
+                            }
+
+                            $grouped2 = [];
+                            foreach ($ip_ranges_2 as $k => $def) {
+                                $label = $def['group_label'] ?? 'その他';
+                                if (!isset($grouped2[$label])) $grouped2[$label] = [];
+                                $grouped2[$label][$k] = $def;
+                            }
+
+                            $global_selected_ips = get_option('ggc_global_selected_ips', []);
+                            if (!is_array($global_selected_ips)) $global_selected_ips = [];
+
+                            $global_selected_ips_2 = get_option('ggc_global_selected_ips_2', []);
+                            if (!is_array($global_selected_ips_2)) $global_selected_ips_2 = [];
+
+                            if (!empty($grouped1)) {
+                                echo '<h4 style="margin-top:0;">IPアドレス範囲1</h4>';
+                                foreach ($grouped1 as $glabel => $group) {
+                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
+                                    foreach ($group as $key => $ipd) {
+                                        echo '<label style="display:block; margin-bottom:4px;">';
+                                        echo '<input type="checkbox" name="ggc_global_selected_ips[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_selected_ips), true, false) . ' /> ';
+                                        echo esc_html($ipd['label']);
+                                        echo '</label>';
+                                    }
+                                }
+                            }
+
+                            if (!empty($grouped2)) {
+                                echo '<h4 style="margin-top:10px;">IPアドレス範囲2</h4>';
+                                foreach ($grouped2 as $glabel => $group) {
+                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
+                                    foreach ($group as $key => $ipd) {
+                                        echo '<label style="display:block; margin-bottom:4px;">';
+                                        echo '<input type="checkbox" name="ggc_global_selected_ips_2[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_selected_ips_2), true, false) . ' /> ';
+                                        echo esc_html($ipd['label']);
+                                        echo '</label>';
+                                    }
+                                }
+                            }
+
+                            ?>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            <!-- Media-level global settings -->
+            <tr>
+                <th scope="row">グローバル設定 User-Agent-メディア</th>
+                <td>
+                    <?php $global_media_ua_control = get_option('ggc_global_media_user_agent_control', 'apply_new_posts'); ?>
+                    <select name="ggc_global_media_user_agent_control" id="ggc_global_media_user_agent_control_select">
+                        <option value="none" <?php selected($global_media_ua_control, 'none'); ?>>メディア制御設定を適用しない</option>
+                        <option value="apply_new_posts" <?php selected($global_media_ua_control, 'apply_new_posts'); ?>>メディア制御設定を新規投稿で適用</option>
+                        <option value="global_blacklist" <?php selected($global_media_ua_control, 'global_blacklist'); ?>>全ページでブラックリスト</option>
+                        <option value="global_whitelist" <?php selected($global_media_ua_control, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
+                    </select>
+                    <div id="ggc-global-media-ua-list" style="display: <?php echo in_array($global_media_ua_control, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>; margin-top:8px;">
+                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
+                            <?php echo ($global_media_ua_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたUser-Agentはメディア表示、それ以外は代替テキスト表示します。</strong>' : '<strong>ブラックリスト : チェックしたUser-Agentは代替テキスト表示、それ以外はメディア表示します。</strong>'; ?>
+                        </p>
+                        <p style="font-size:11px; margin-top:0; font-weight:bold;">User-Agent 制御リスト（メディア向け）:</p>
+                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
+                            <?php
+                            $bots = Custom_Crawler_Core::get_allowable_bots();
+                            $grouped = [];
+                            foreach ($bots as $key => $b) {
+                                $group_label = $b['group_label'] ?? 'その他';
+                                if (!isset($grouped[$group_label])) $grouped[$group_label] = [];
+                                $grouped[$group_label][$key] = $b;
+                            }
+
+                            $global_media_selected_crawlers = get_option('ggc_global_media_selected_crawlers', []);
+                            if (!is_array($global_media_selected_crawlers)) $global_media_selected_crawlers = [];
+
+                            foreach ($grouped as $glabel => $bots_in_group) : ?>
+                                <h4 style="margin: 8px 0 6px; font-size:13px;"><strong><?php echo esc_html($glabel); ?></strong></h4>
+                                <?php foreach ($bots_in_group as $bkey => $bot): ?>
+                                    <label style="display:block; margin-bottom:4px;">
+                                        <input type="checkbox" name="ggc_global_media_selected_crawlers[]" value="<?php echo esc_attr($bkey); ?>" <?php checked(in_array(sanitize_key($bkey), $global_media_selected_crawlers), true); ?>>
+                                        <?php echo esc_html($bot['label']); ?>
+                                    </label>
+                                <?php endforeach; ?>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">グローバル設定 IPアドレスの評価-メディア</th>
+                <td>
+                    <?php $global_media_ip_evaluation = get_option('ggc_global_media_ip_evaluation', 'apply_new_posts'); ?>
+                    <select name="ggc_global_media_ip_evaluation" id="ggc_global_media_ip_evaluation_select">
+                        <option value="none" <?php selected($global_media_ip_evaluation, 'none'); ?>>メディア制御設定を適用しない</option>
+                        <option value="apply_new_posts" <?php selected($global_media_ip_evaluation, 'apply_new_posts'); ?>>メディア制御設定を新規投稿で適用</option>
+                        <option value="global_blacklist" <?php selected($global_media_ip_evaluation, 'global_blacklist'); ?>>全ページでブラックリスト</option>
+                        <option value="global_whitelist" <?php selected($global_media_ip_evaluation, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
+                    </select>
+                    <div id="ggc-global-media-ip-list" style="display: <?php echo in_array($global_media_ip_evaluation, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>; margin-top:8px;">
+                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
+                            <?php echo ($global_media_ip_evaluation === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたIP範囲はメディア表示、それ以外は代替テキスト表示します。</strong>' : '<strong>ブラックリスト : チェックしたIP範囲は代替テキスト表示、それ以外はメディア表示します。</strong>'; ?>
+                        </p>
+                        <p style="font-size:11px; margin-top:0; font-weight:bold;">IPアドレス制御リスト（メディア向け）:</p>
+                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
+                            <?php
+                            $ip_ranges_1 = get_option('ggc_ip_range_definitions', []);
+                            $ip_ranges_2 = get_option('ggc_ip_range_definitions_2', []);
+
+                            $grouped1 = [];
+                            foreach ($ip_ranges_1 as $k => $def) {
+                                $label = $def['group_label'] ?? 'その他';
+                                if (!isset($grouped1[$label])) $grouped1[$label] = [];
+                                $grouped1[$label][$k] = $def;
+                            }
+
+                            $grouped2 = [];
+                            foreach ($ip_ranges_2 as $k => $def) {
+                                $label = $def['group_label'] ?? 'その他';
+                                if (!isset($grouped2[$label])) $grouped2[$label] = [];
+                                $grouped2[$label][$k] = $def;
+                            }
+
+                            $global_media_selected_ips = get_option('ggc_global_media_selected_ips', []);
+                            if (!is_array($global_media_selected_ips)) $global_media_selected_ips = [];
+
+                            $global_media_selected_ips_2 = get_option('ggc_global_media_selected_ips_2', []);
+                            if (!is_array($global_media_selected_ips_2)) $global_media_selected_ips_2 = [];
+
+                            if (!empty($grouped1)) {
+                                echo '<h4 style="margin-top:0;">IPアドレス範囲1</h4>';
+                                foreach ($grouped1 as $glabel => $group) {
+                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
+                                    foreach ($group as $key => $ipd) {
+                                        echo '<label style="display:block; margin-bottom:4px;">';
+                                        echo '<input type="checkbox" name="ggc_global_media_selected_ips[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_media_selected_ips), true, false) . ' /> ';
+                                        echo esc_html($ipd['label']);
+                                        echo '</label>';
+                                    }
+                                }
+                            }
+
+                            if (!empty($grouped2)) {
+                                echo '<h4 style="margin-top:10px;">IPアドレス範囲2</h4>';
+                                foreach ($grouped2 as $glabel => $group) {
+                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
+                                    foreach ($group as $key => $ipd) {
+                                        echo '<label style="display:block; margin-bottom:4px;">';
+                                        echo '<input type="checkbox" name="ggc_global_media_selected_ips_2[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_media_selected_ips_2), true, false) . ' /> ';
+                                        echo esc_html($ipd['label']);
+                                        echo '</label>';
+                                    }
+                                }
+                            }
+
+                            ?>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+                        <tr>
+                <th scope="row">アイキャッチ画像の代替テキスト（ブラックリスト/ホワイトリスト使用時）</th>
+                <td>
+                    <?php 
+                    $alt_fixed_featured = get_option('ggc_alt_fixed_text_featured', ''); 
+                    ?>
+                    <input type="text" id="ggc_alt_fixed_text_featured" name="ggc_alt_fixed_text_featured" value="<?php echo esc_attr($alt_fixed_featured); ?>" class="regular-text" placeholder="アイキャッチ画像の代替テキスト（使用時）">
+                    <p class="description">アイキャッチ画像が表示除外された場合に代替テキストとして使用するテキストを指定します。未入力の場合は通常の代替テキストを使用します。</p>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">代替テキスト（ブラックリスト/ホワイトリスト使用時）</th>
+                <td>
+                    <?php 
+                    $alt_fixed = get_option('ggc_alt_fixed_text', ''); 
+                    ?>
+                    <input type="text" id="ggc_alt_fixed_text" name="ggc_alt_fixed_text" value="<?php echo esc_attr($alt_fixed); ?>" class="regular-text" placeholder="代替テキスト（使用時）">
+                    <p class="description">メディアを代替テキストとして使用するテキストにする場合に指定します。メディア制御でブラックリスト/ホワイトリストを選択した場合に有効になります。</p>
                 </td>
             </tr>
             <tr>
@@ -713,6 +991,16 @@ class Custom_Admin_Settings {
                     <p class="description">User-Agent, IPアドレス範囲, 不正UAパターンの推奨初期設定をインポートします。既存のカスタム設定は上書きされません。</p>
                 </td>
             </tr>
+            <tr>
+                <th scope="row">
+                    全データのクリア
+                </th>
+                <td>
+                    <?php $clear_url = wp_nonce_url( admin_url('admin-post.php?action=ggc_clear_all_data'), 'ggc_clear_all_data_nonce' ); ?>
+                    <a href="<?php echo esc_url($clear_url); ?>" class="button button-secondary" onclick="return confirm('設定オプション・投稿/メディアのメタデータ・IP更新履歴をすべて削除します。よろしいですか？');">すべての保存データをクリアする</a>
+                    <p class="description">設定画面の保存済みオプション、投稿/メディアに保存されたメタデータなどのすべてを削除します。プラグインのバージョンアップをして動作が不安定な場合などにご利用ください。</p>
+                </td>
+            </tr>
         </table>
         </div>
         <?php
@@ -729,7 +1017,7 @@ class Custom_Admin_Settings {
             投稿ごとの制御機能で使用するUser-Agentのリストです。カスタムのボットを追加・編集できます。
         </p>
         <p class="description">
-            - 定義キー : システム内部で使用される一意の識別子です。必須項目です。英数字のみ登録可能です。
+            - 定義キー : システム内部で使用される一意の識別子です。ここにテキストを入力すると、メディアが評価条件に従い代替テキストに置き換わります。空欄の場合はメディアが表示されます。英数字のみ登録可能です。
             - グループラベル : ボットのグループ名を設定します。同じグループ名を設定すると、投稿編集画面でまとめて表示されます。
             - 表示ラベル : 投稿編集画面で表示される名前です。わかりやすい名前を設定してください。<br>
             - 説明文       : 投稿編集画面で表示される説明文です。必要に応じて設定してください。<br>
@@ -1465,6 +1753,56 @@ class Custom_Admin_Settings {
         if (isset($_GET['ip-reset']) && $_GET['ip-reset'] === '1') {
             echo '<div class="notice notice-success is-dismissible"><p><strong>クローラー個別制御プラグイン:</strong> IPアドレス範囲設定を初期化（削除）しました。デフォルト値が表示されています。</p></div>';
         }
+    }
+
+    /**
+     * 全データクリア完了通知
+     */
+    public function admin_notice_clear_all_success() {
+        if (!current_user_can('manage_options') || is_network_admin()) return;
+        if (isset($_GET['ggc-cleared']) && $_GET['ggc-cleared'] === '1') {
+            echo '<div class="notice notice-success is-dismissible"><p><strong>クローラー個別制御プラグイン:</strong> 設定オプション・投稿/メディアのメタデータ・IP更新履歴を削除しました。</p></div>';
+        }
+    }
+
+    /**
+     * 全データ（オプション/メタ/履歴）を削除
+     */
+    public function admin_action_clear_all_data() {
+        if (!current_user_can('manage_options')) {
+            wp_die('権限がありません。');
+        }
+
+        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_key(wp_unslash($_GET['_wpnonce'])), 'ggc_clear_all_data_nonce')) {
+            wp_die('セキュリティチェックに失敗しました。');
+        }
+
+        global $wpdb;
+
+        // ggc_ で始まるオプションを削除
+        $opt_like = $wpdb->esc_like('ggc_') . '%';
+        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $opt_like));
+
+        // _ggc_ で始まる post_meta を削除（投稿/メディア）
+        $meta_like = $wpdb->esc_like('_ggc_') . '%';
+        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s", $meta_like));
+
+        // スケジュールをクリア
+        wp_clear_scheduled_hook('ggc_daily_ip_update');
+
+        // IP更新頻度を初期化してスケジュール再設定
+        update_option('ggc_ip_update_frequency', 'daily');
+        Custom_Crawler_Core::ip_update_schedule_check();
+
+        $redirect_url = remove_query_arg(['action', '_wpnonce'], wp_get_referer());
+        $redirect_url = add_query_arg('ggc-cleared', '1', $redirect_url);
+
+        if (isset($_GET['tab'])) {
+            $redirect_url = add_query_arg('tab', sanitize_text_field($_GET['tab']), $redirect_url);
+        }
+
+        wp_safe_redirect($redirect_url);
+        exit;
     }
     /**
      * 診断ツールセクションの表示
