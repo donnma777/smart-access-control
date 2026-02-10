@@ -336,52 +336,6 @@ class Custom_Post_Metabox {
                             <?php $group_counter = 0; foreach ($grouped_browser_patterns as $group_label => $patterns_in_group) : $group_counter++; $group_id = 'ggc-pattern-group-' . $group_counter; ?>
                                 <h4 class="ggc-group-header" data-target="#<?php echo esc_attr($group_id); ?>" style="cursor: pointer; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 10px; margin-bottom: 5px;">
                                     <span class="dashicons dashicons-arrow-right-alt2 ggc-arrow"></span>
-                                            <!-- メディアごとの評価・代替テキスト入力欄 -->
-                                            <div class="ggc-section" style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
-                                                <h4 style="margin: 0 0 10px;">メディアごとの評価と代替テキスト</h4>
-                                                <p style="font-size:11px;">投稿本文内のメディアごとに、評価値に応じて代替テキストを入力できます。</p>
-
-                                                <?php
-                                                // 投稿本文からメディアを抽出
-                                                $content = $post->post_content;
-                                                preg_match_all('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches);
-                                                $image_srcs = $matches[1];
-
-                                                // メディアごとの保存済みテキストを取得
-                                                $image_alt_texts = get_post_meta($post->ID, '_ggc_image_alt_texts', true);
-                                                if (!is_array($image_alt_texts)) $image_alt_texts = [];
-
-                                                if (!empty($image_srcs)) :
-                                                    echo '<ul style="list-style: none; padding-left: 0;">';
-                                                    foreach ($image_srcs as $src) {
-                                                        // 仮の評価値取得関数（実装に応じて変更）
-                                                        if (function_exists('get_image_evaluation')) {
-                                                            $eval = get_image_evaluation($src, $post->ID);
-                                                        } else {
-                                                            $eval = null; // デフォルトはnull
-                                                        }
-
-                                                        // 例: 評価値が"low"の場合のみテキストボックスを表示
-                                                        $show_textbox = ($eval === 'low' || is_null($eval));
-
-                                                        echo '<li style="margin-bottom: 10px;">';
-                                                        echo '<div><img src="' . esc_url($src) . '" style="max-width:80px; max-height:80px; vertical-align:middle; margin-right:8px;">';
-                                                        if ($show_textbox) {
-                                                            $val = isset($image_alt_texts[$src]) ? esc_attr($image_alt_texts[$src]) : '';
-                                                            echo '<input type="text" name="ggc_image_alt_texts[' . esc_attr($src) . ']" value="' . $val . '" placeholder="代替テキストを入力" style="width:60%;">';
-                                                            echo ' <span style="font-size:10px; color:#888;">(評価: ' . esc_html($eval ?? '未評価') . ')</span>';
-                                                        } else {
-                                                            echo '<span style="font-size:12px; color:#888;">評価が高いため代替テキスト不要</span>';
-                                                        }
-                                                        echo '</div>';
-                                                        echo '</li>';
-                                                    }
-                                                    echo '</ul>';
-                                                else:
-                                                    echo '<p style="font-size:11px; color:#888;">本文にメディアはありません。</p>';
-                                                endif;
-                                                ?>
-                                            </div>
                                     <?php echo esc_html($group_label); ?>
                                     <small style="float: right; cursor: pointer; color: #0073aa;" class="ggc-toggle-all-pattern" data-group="<?php echo esc_attr($group_id); ?>"> [全選択/解除] </small>
                                 </h4>
@@ -483,6 +437,53 @@ class Custom_Post_Metabox {
             <!-- Media Control Section -->
             <div class="ggc-section" style="margin-top:15px; border-top: 1px dashed #eee; padding-top: 10px;">
                 <h4 style="margin: 0 0 10px;">メディア制御</h4>
+
+                <!-- メディアごとの評価・代替テキスト入力欄 -->
+                <div class="ggc-section" style="margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px;">
+                    <h4 style="margin: 0 0 10px;">メディアごとの評価と代替テキスト</h4>
+                    <p style="font-size:11px;">投稿本文内のメディアごとに、評価値に応じて代替テキストを入力できます。</p>
+
+                    <?php
+                    // 投稿本文からメディアを抽出
+                    $content = $post->post_content;
+                    preg_match_all('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches);
+                    $image_srcs = $matches[1];
+
+                    // メディアごとの保存済みテキストを取得
+                    $image_alt_texts = get_post_meta($post->ID, '_ggc_image_alt_texts', true);
+                    if (!is_array($image_alt_texts)) $image_alt_texts = [];
+
+                    if (!empty($image_srcs)) :
+                        echo '<ul style="list-style: none; padding-left: 0;">';
+                        foreach ($image_srcs as $src) {
+                            // 仮の評価値取得関数（実装に応じて変更）
+                            if (function_exists('get_image_evaluation')) {
+                                $eval = get_image_evaluation($src, $post->ID);
+                            } else {
+                                $eval = null; // デフォルトはnull
+                            }
+
+                            // 例: 評価値が"low"の場合のみテキストボックスを表示
+                            $show_textbox = ($eval === 'low' || is_null($eval));
+
+                            echo '<li style="margin-bottom: 10px;">';
+                            echo '<div><img src="' . esc_url($src) . '" style="max-width:80px; max-height:80px; vertical-align:middle; margin-right:8px;">';
+                            if ($show_textbox) {
+                                $val = isset($image_alt_texts[$src]) ? esc_attr($image_alt_texts[$src]) : '';
+                                echo '<input type="text" name="ggc_image_alt_texts[' . esc_attr($src) . ']" value="' . $val . '" placeholder="代替テキストを入力" style="width:60%;">';
+                                echo ' <span style="font-size:10px; color:#888;">(評価: ' . esc_html($eval ?? '未評価') . ')</span>';
+                            } else {
+                                echo '<span style="font-size:12px; color:#888;">評価が高いため代替テキスト不要</span>';
+                            }
+                            echo '</div>';
+                            echo '</li>';
+                        }
+                        echo '</ul>';
+                    else:
+                        echo '<p style="font-size:11px; color:#888;">本文にメディアはありません。</p>';
+                    endif;
+                    ?>
+                </div>
 
                 <label for="ggc_media_ua_action" style="display:block; font-weight:bold; margin-bottom:6px;">User-Agent の評価 - メディア：</label>
                 <select name="ggc_media_ua_action" id="ggc_media_ua_action" style="width:100%; margin-bottom:10px;">

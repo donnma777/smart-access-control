@@ -649,7 +649,7 @@ class Custom_Admin_Settings {
                     </tr>
                     <tr>
                         <td><strong>バージョン</strong></td>
-                        <td>3.0.0</td>
+                        <td>3.0.1</td>
                     </tr>
                     <tr>
                         <td><strong>作者</strong></td>
