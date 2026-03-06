@@ -4,19 +4,40 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// load traits for auxiliary large sections that are easier to manage on
+// their own files. both usage and diagnostic tools live in separate traits.
+require_once __DIR__ . '/class-usage.php';
+require_once __DIR__ . '/class-diagnostic-tools.php';
+// common admin helpers
+require_once __DIR__ . '/class-admin-utils.php';
+// shared option helpers
+require_once dirname(__DIR__) . '/includes/class-option-utils.php';
+// display helpers
+require_once dirname(__DIR__) . '/includes/class-display-utils.php';
+// Ajax helpers
+require_once dirname(__DIR__) . '/includes/class-ajax-utils.php';
+// markdown template AJAX handlers
+require_once __DIR__ . '/class-admin-markdown-templates.php';
+// IP range admin helpers
+require_once __DIR__ . '/class-admin-ip-ranges.php';
+
 class Custom_Admin_Settings {
+
+    use Custom_Admin_Usage, Custom_Admin_Diagnostic;
 
     protected static $instance = null;
 
-    // タブの定義
-    private $tabs = [
-        'general'  => '一般設定',
+    // タブの定義（定数化）
+    private const TABS = [
+        'general'  => 'グローバル設定',
+        'markdown' => 'マークダウン',
+        'page_eval' => 'ページの評価',
         'bots'     => 'User-Agent 定義1',
         'patterns' => 'User-Agent 定義2',
         'ips'      => 'IPアドレス範囲1',
         'ips2'     => 'IPアドレス範囲2',
         'tools'    => '診断ツール',
-        'usage'    => 'アプリの使い方',
+        'usage'    => 'プラグインの使い方',
     ];
 
     private function __construct() {
@@ -47,6 +68,13 @@ class Custom_Admin_Settings {
         // AJAX endpoint for parsing a provided source_url
         add_action('wp_ajax_ggc_parse_ip_source', [ $this, 'ajax_parse_ip_source' ]);
 
+        // Markdown templates (AJAX) - delegated to Admin_Markdown_Templates
+        add_action('wp_ajax_ggc_get_markdown_template', [ 'Admin_Markdown_Templates', 'ajax_get_markdown_template' ]);
+        add_action('wp_ajax_ggc_save_markdown_template', [ 'Admin_Markdown_Templates', 'ajax_save_markdown_template' ]);
+        add_action('wp_ajax_ggc_delete_markdown_template', [ 'Admin_Markdown_Templates', 'ajax_delete_markdown_template' ]);
+        // used by JS to rebuild template select list after edits
+        add_action('wp_ajax_ggc_list_markdown_templates', [ 'Admin_Markdown_Templates', 'ajax_list_markdown_templates' ]);
+
         // おすすめ設定インポート
         add_action('admin_action_ggc_import_default_settings', [ $this, 'admin_action_import_default_settings' ]);
         add_action('admin_notices', [ $this, 'admin_notice_import_success' ]);
@@ -66,9 +94,12 @@ class Custom_Admin_Settings {
         // Prefer using the $hook provided by WP for reliability
         if ($hook !== 'settings_page_ggc-crawler-definitions') return;
 
+        wp_enqueue_media();
+
         $plugin_dir = plugin_dir_path(dirname(__DIR__) . '/custom-crawler-control.php');
         $plugin_url = plugin_dir_url(dirname(__DIR__) . '/custom-crawler-control.php');
         $js_asset_path = $plugin_dir . 'js/admin-settings.js';
+        $css_asset_path = $plugin_dir . 'css/admin-settings.css';
 
         wp_enqueue_script(
             'ggc-settings-js',
@@ -80,7 +111,16 @@ class Custom_Admin_Settings {
         wp_localize_script('ggc-settings-js', 'ggcSettings', [
             'ajax_url' => admin_url('admin-ajax.php'),
             'run_update_nonce' => wp_create_nonce('ggc_run_update_nonce'),
+            'markdown_nonce' => wp_create_nonce('ggc_markdown_template_nonce'),
+            'page_eval_messages' => ggc_get_default_page_eval_messages(),
         ]);
+
+        wp_enqueue_style(
+            'ggc-admin-settings-css',
+            $plugin_url . 'css/admin-settings.css',
+            [],
+            file_exists($css_asset_path) ? filemtime($css_asset_path) : '4.3.4'
+        );
 
     }
 
@@ -101,86 +141,174 @@ class Custom_Admin_Settings {
      * 現在のタブを取得
      */
     private function get_current_tab() {
-        return isset($_GET['tab']) && array_key_exists($_GET['tab'], $this->tabs) ? $_GET['tab'] : 'general';
+        return isset($_GET['tab']) && array_key_exists($_GET['tab'], self::TABS) ? $_GET['tab'] : 'general';
     }
 
     /**
      * 設定の登録、セクション、フィールドの定義
      */
     public function register_settings() {
-        // 1. 一般設定
-        register_setting('ggc_general_option_group', 'ggc_ip_update_frequency', ['sanitize_callback' => [ $this, 'sanitize_ip_update_frequency' ], 'default' => 'daily']);
+        $this->register_general_settings();
+        $this->register_user_agent_settings();
+        $this->register_ip_settings();
+        $this->register_browser_patterns_settings();
+        $this->register_ip2_settings();
+        $this->register_markdown_settings();
+        $this->register_page_eval_settings();
+    }
 
+    // --- 各セクションごとに分割 ---
+    private function register_general_settings() {
+        register_setting('ggc_general_option_group', 'ggc_global_media_eval_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_media_display_mode', [
+            'sanitize_callback' => function($value) {
+                $value = sanitize_text_field($value);
+                // alt_replace で代替テキストが空の場合は通常表示に変換
+                if ($value === 'alt_replace') {
+                    $alt_text = isset($_POST['ggc_alt_fixed_text'])
+                        ? sanitize_text_field($_POST['ggc_alt_fixed_text'])
+                        : get_option('ggc_alt_fixed_text', '');
+                    if (empty(trim($alt_text))) {
+                        return 'normal';
+                    }
+                }
+                return $value;
+            },
+            'default' => 'normal',
+        ]);
+        register_setting('ggc_general_option_group', 'ggc_global_featured_display_mode', [
+            'sanitize_callback' => function($value) {
+                $value = sanitize_text_field($value);
+                // alt_replace で代替テキストが空の場合は通常表示に変換
+                if ($value === 'alt_replace') {
+                    $alt_text = isset($_POST['ggc_alt_fixed_text_featured'])
+                        ? sanitize_text_field($_POST['ggc_alt_fixed_text_featured'])
+                        : get_option('ggc_alt_fixed_text_featured', '');
+                    if (empty(trim($alt_text))) {
+                        return 'normal';
+                    }
+                }
+                return $value;
+            },
+            'default' => 'normal',
+        ]);
+        register_setting('ggc_general_option_group', 'ggc_ip_update_frequency', ['sanitize_callback' => [ $this, 'sanitize_ip_update_frequency' ], 'default' => 'daily']);
         add_settings_section(
             'ggc_general_settings',
-            '一般設定',
+            'グローバル設定',
             [ $this, 'render_general_settings_section' ],
             'ggc_tab_general'
         );
+        register_setting('ggc_general_option_group', 'ggc_global_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_ip_evaluation', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_media_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_media_ip_evaluation', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        // ggc_global_featured_visible_when_hidden は廃止（ggc_global_featured_display_mode に統合）
+        register_setting('ggc_general_option_group', 'ggc_global_page_eval_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_page_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_page_ip_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_selected_patterns', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_selected_ips', ['sanitize_callback' => function($v){ return Custom_Admin_Settings::sanitize_global_selected_ips_preserve($v, 'ggc_global_selected_ips'); }, 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_selected_ips_2', ['sanitize_callback' => function($v){ return Custom_Admin_Settings::sanitize_global_selected_ips_preserve($v, 'ggc_global_selected_ips_2'); }, 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_patterns', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_ips', ['sanitize_callback' => function($v){ return Custom_Admin_Settings::sanitize_global_selected_ips_preserve($v, 'ggc_global_media_selected_ips'); }, 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_media_selected_ips_2', ['sanitize_callback' => function($v){ return Custom_Admin_Settings::sanitize_global_selected_ips_preserve($v, 'ggc_global_media_selected_ips_2'); }, 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_alt_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_alt_fixed_text', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_alt_fixed_text_featured', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_markdown_replace_enabled', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'off']);
+        register_setting('ggc_general_option_group', 'ggc_markdown_global_template_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'select']);
+        register_setting('ggc_general_option_group', 'ggc_markdown_global_template_key', ['sanitize_callback' => [ $this, 'sanitize_global_markdown_template_key' ], 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_global_markdown_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_markdown_selected_patterns', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
+        register_setting('ggc_general_option_group', 'ggc_global_markdown_selected_ips', [
+            'sanitize_callback' => function($input) { return Custom_Admin_Settings::sanitize_global_selected_ips_preserve($input, 'ggc_global_markdown_selected_ips'); },
+            'default' => []
+        ]);
+        register_setting('ggc_general_option_group', 'ggc_global_markdown_selected_ips_2', [
+            'sanitize_callback' => function($input) { return Custom_Admin_Settings::sanitize_global_selected_ips_preserve($input, 'ggc_global_markdown_selected_ips_2'); },
+            'default' => []
+        ]);
+        register_setting('ggc_general_option_group', 'ggc_markdown_ua_eval', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_markdown_ip_eval', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
+        register_setting('ggc_general_option_group', 'ggc_global_ua_redirect_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'block']);
+        register_setting('ggc_general_option_group', 'ggc_global_ip_redirect_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'block']);
+        register_setting('ggc_general_option_group', 'ggc_global_ua_redirect_url', ['sanitize_callback' => 'esc_url_raw', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_global_ip_redirect_url', ['sanitize_callback' => 'esc_url_raw', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_global_ua_block_message_key', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_global_ip_block_message_key', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_global_ua_block_message', ['sanitize_callback' => 'sanitize_textarea_field', 'default' => '']);
+        register_setting('ggc_general_option_group', 'ggc_global_ip_block_message', ['sanitize_callback' => 'sanitize_textarea_field', 'default' => '']);
+    }
 
-        // 2. User-Agent 定義リスト
-        register_setting('ggc_bots_option_group', 'ggc_crawler_definitions', ['sanitize_callback' => [ $this, 'sanitize_crawler_definitions' ], 'default' => Custom_Crawler_Core::get_allowable_bots()]);
-
+    private function register_user_agent_settings() {
+        register_setting('ggc_bots_option_group', 'ggc_crawler_definitions', ['sanitize_callback' => [ $this, 'sanitize_crawler_definitions' ], 'default' => []]);
         add_settings_section(
             'ggc_crawler_definitions',
             'User-Agent 定義リスト1',
             [ $this, 'render_crawler_definitions_section' ],
             'ggc_tab_bots'
         );
+    }
 
-        // 3. IPアドレス範囲 定義リスト
-        register_setting('ggc_ips_option_group', 'ggc_ip_range_definitions', ['sanitize_callback' => [ $this, 'sanitize_ip_range_definitions' ], 'default' => ggc_get_default_ip_ranges()]);
-
+    private function register_ip_settings() {
+        register_setting('ggc_ips_option_group', 'ggc_ip_range_definitions', ['sanitize_callback' => [ $this, 'sanitize_ip_range_definitions' ], 'default' => []]);
         add_settings_section(
             'ggc_ip_range_definitions',
             'IPアドレス範囲 定義リスト1',
             [ $this, 'render_ip_range_definitions_section' ],
             'ggc_tab_ips'
         );
+    }
 
-        // 4. 不正UAパターン 定義リスト
-        register_setting('ggc_patterns_option_group', 'ggc_browser_block_patterns', ['sanitize_callback' => [ $this, 'sanitize_browser_block_patterns' ], 'default' => Custom_Crawler_Core::get_browser_block_patterns()]);
-
+    private function register_browser_patterns_settings() {
+        register_setting('ggc_patterns_option_group', 'ggc_browser_block_patterns', ['sanitize_callback' => [ $this, 'sanitize_browser_block_patterns' ], 'default' => []]);
         add_settings_section(
             'ggc_browser_block_patterns',
             'User-Agent 定義リスト2',
             [ $this, 'render_browser_block_patterns_section' ],
             'ggc_tab_patterns'
         );
+    }
 
-        // 5. IPアドレス範囲 定義リスト2
-        register_setting('ggc_ips2_option_group', 'ggc_ip_range_definitions_2', ['sanitize_callback' => [ $this, 'sanitize_ip_range_definitions_2' ], 'default' => ggc_get_default_ip_ranges_2()]);
-
+    private function register_ip2_settings() {
+        register_setting('ggc_ips2_option_group', 'ggc_ip_range_definitions_2', ['sanitize_callback' => [ $this, 'sanitize_ip_range_definitions_2' ], 'default' => []]);
         add_settings_section(
             'ggc_ip_range_definitions_2',
             'IPアドレス範囲 定義リスト2',
             [ $this, 'render_ip_range_definitions_section_2' ],
             'ggc_tab_ips2'
         );
+    }
 
-        // Removed 'ページ個別制御の初期状態' setting
-        // Added new global settings for User-Agent and IP address evaluation
-        register_setting('ggc_general_option_group', 'ggc_global_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
-        register_setting('ggc_general_option_group', 'ggc_global_ip_evaluation', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
+    private function register_markdown_settings() {
+        // ダミーフィールド（セクションを必ず表示させるため）
+        add_settings_field(
+            'ggc_markdown_templates_dummy',
+            '',
+            function () { echo '<div style="display:none"></div>'; },
+            'ggc_tab_markdown',
+            'ggc_markdown_templates_section'
+        );
+        register_setting('ggc_markdown_option_group', 'ggc_markdown_templates', ['sanitize_callback' => [ $this, 'sanitize_markdown_templates' ], 'default' => []]);
+        add_settings_section(
+            'ggc_markdown_templates_section',
+            'マークダウンテンプレート定義',
+            [ $this, 'render_markdown_templates_section' ],
+            'ggc_tab_markdown'
+        );
+    }
 
-        // Media-specific global settings (separate from page-level globals)
-        register_setting('ggc_general_option_group', 'ggc_global_media_user_agent_control', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
-        register_setting('ggc_general_option_group', 'ggc_global_media_ip_evaluation', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'apply_new_posts']);
-
-        // Global selection lists when using global blacklist/whitelist (page-level)
-        register_setting('ggc_general_option_group', 'ggc_global_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
-        register_setting('ggc_general_option_group', 'ggc_global_selected_ips', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
-        register_setting('ggc_general_option_group', 'ggc_global_selected_ips_2', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
-
-        // Global selection lists for media when using global blacklist/whitelist (media-level)
-        register_setting('ggc_general_option_group', 'ggc_global_media_selected_crawlers', ['sanitize_callback' => [ $this, 'sanitize_global_selected_crawlers' ], 'default' => []]);
-        register_setting('ggc_general_option_group', 'ggc_global_media_selected_ips', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
-        register_setting('ggc_general_option_group', 'ggc_global_media_selected_ips_2', ['sanitize_callback' => [ $this, 'sanitize_global_selected_ips' ], 'default' => []]);
-
-        // Alt text behavior for excluded media: none | individual | fixed
-        register_setting('ggc_general_option_group', 'ggc_alt_mode', ['sanitize_callback' => 'sanitize_text_field', 'default' => 'none']);
-        register_setting('ggc_general_option_group', 'ggc_alt_fixed_text', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
-        register_setting('ggc_general_option_group', 'ggc_alt_fixed_text_featured', ['sanitize_callback' => 'sanitize_text_field', 'default' => '']);
+    private function register_page_eval_settings() {
+        register_setting('ggc_page_eval_option_group', 'ggc_page_eval_messages', ['sanitize_callback' => [ $this, 'sanitize_page_eval_messages' ], 'default' => []]);
+        add_settings_section(
+            'ggc_page_eval_messages_section',
+            'ページ評価メッセージ定義',
+            [ $this, 'render_page_eval_messages_section' ],
+            'ggc_tab_page_eval'
+        );
     }
 
     // --------------------------------------------------------
@@ -188,197 +316,166 @@ class Custom_Admin_Settings {
     // --------------------------------------------------------
 
     public function sanitize_crawler_definitions($input) {
-        $new_input = [];
-        if (!is_array($input)) {
-            return [];
-        }
-        // Preserve canonical default keys: map lowercase -> original
         $defaults = ggc_get_default_bots();
-        $default_key_map = [];
-        foreach ($defaults as $dkey => $_) {
-            $default_key_map[strtolower($dkey)] = $dkey;
-        }
-        foreach ($input as $key => $bot) {
-            $new_key = sanitize_key($bot['key'] ?? $key);
-            // If this key corresponds to a default (case-insensitive), restore canonical default key name
-            $lk = strtolower($new_key);
-            if (isset($default_key_map[$lk])) {
-                $new_key = $default_key_map[$lk];
-            }
-            if (empty($new_key)) continue;
-
-            $uas = isset($bot['uas']) ? $bot['uas'] : '';
-            if (is_string($uas)) {
-                $uas = array_map('trim', explode(',', $uas));
-            }
-            $new_input[$new_key] =
-            [
-                'uas' => is_array($uas) ? array_map('sanitize_text_field', array_filter($uas)) : [],
-                'label' => sanitize_text_field($bot['label'] ?? ''),
-                'group_label' => sanitize_text_field($bot['group_label'] ?? 'その他'),
-                'description' => sanitize_textarea_field($bot['description'] ?? ''),
-            ];
-        }
-        return $new_input;
+        return $this->sanitize_ua_definitions_common($input, $defaults, ['key','label','group_label','description','uas']);
     }
 
     // Sanitize functions for global selected lists
-    public function sanitize_global_selected_crawlers($input) {
+    /**
+     * 配列のキーをsanitizeし、空要素を除去して返す共通関数
+     */
+    private function sanitize_array_keys($input) {
         if (!is_array($input)) return [];
         return array_values(array_map('sanitize_key', array_filter($input)));
     }
 
+    public function sanitize_global_selected_crawlers($input) {
+        return $this->sanitize_array_keys($input);
+    }
+
     public function sanitize_global_selected_ips($input) {
+        return $this->sanitize_array_keys($input);
+    }
+
+    /**
+     * Sanitizer for the global markdown template key that enforces selection when
+     * UA/IP evaluation is active and the mode requires a specific template.
+     */
+    public function sanitize_global_markdown_template_key($input) {
+        $input = sanitize_text_field($input);
+        $md_opts = GGC_Options::get_markdown_options();
+        $mdMode = $md_opts['replace_enabled'];
+        $ua_eval = $md_opts['ua_eval'];
+        $ip_eval = $md_opts['ip_eval'];
+
+        if ($mdMode === 'all' && ($ua_eval !== 'none' || $ip_eval !== 'none')) {
+            $template_mode = $md_opts['global_template_mode'];
+            $mode_no_raw = preg_replace('/_raw$/', '', $template_mode);
+            if ($mode_no_raw === 'select' && $input === '') {
+                add_settings_error(
+                    'ggc_general_option_group',
+                    'ggc_md_template_key_required',
+                    'テンプレートを選択してください。',
+                    'error'
+                );
+                // preserve existing value to avoid clearing
+                return GGC_Options::get_markdown_global_template_key();
+            }
+        }
+
+        return $input;
+    }
+
+    // Preserve existing option value when POST omits the field (prevents accidental clearing)
+    public static function sanitize_global_selected_ips_preserve($input, $option_name) {
+        $present_key = $option_name . '_present';
+        // フォームで存在確認された場合は空配列返却
+        if ( isset($_POST[$present_key]) ) {
+            if (!is_array($input)) return [];
+            return Custom_Admin_Settings::sanitize_array_keys_static($input);
+        }
+        // POSTにフィールドがなければDB値を維持
+        if (!is_array($input)) {
+            $existing = GGC_Options::get_array_option($option_name, []);
+            return is_array($existing) ? Custom_Admin_Settings::sanitize_array_keys_static($existing) : [];
+        }
+        return Custom_Admin_Settings::sanitize_array_keys_static($input);
+    }
+
+    /**
+     * static用 共通sanitize関数
+     */
+    private static function sanitize_array_keys_static($input) {
         if (!is_array($input)) return [];
         return array_values(array_map('sanitize_key', array_filter($input)));
     }
+
+    public function sanitize_markdown_templates($input) {
+        $templates_cleared = GGC_Options::get_markdown_templates_cleared();
+        // If no data submitted (e.g. autosave form submission without templates),
+        // preserve existing option to avoid accidental clearing.
+        if (!is_array($input)) {
+            $existing = GGC_Options::get_markdown_templates();
+            return is_array($existing) ? $existing : [];
+        }
+
+        $new_input = [];
+        foreach ($input as $key => $tpl) {
+            if (!is_array($tpl)) continue;
+
+            $raw_key = $tpl['key'] ?? $key;
+            $new_key = sanitize_key($raw_key);
+            if (empty($new_key)) continue;
+
+            // 必ず配列のキーと'tpl["key"]'を一致させる
+            $tpl_data = [
+                'key' => $new_key,
+                'title' => sanitize_text_field($tpl['title'] ?? ''),
+                'markdown' => sanitize_textarea_field($tpl['markdown'] ?? ''),
+                'image_url' => esc_url_raw($tpl['image_url'] ?? ''),
+                'image_id' => absint($tpl['image_id'] ?? 0),
+                'random_enabled' => !empty($tpl['random_enabled']) ? 1 : 0,
+            ];
+            $new_input[$new_key] = $tpl_data;
+        }
+
+        if (empty($new_input)) {
+            return [];
+        }
+
+        return $new_input;
+    }
+
+    public function sanitize_page_eval_messages($input) {
+        if (!is_array($input)) return [];
+
+        $new_input = [];
+        foreach ($input as $key => $row) {
+            if (!is_array($row)) continue;
+
+            $raw_key = $row['key'] ?? $key;
+            $new_key = sanitize_key($raw_key);
+            if (empty($new_key)) continue;
+
+            $label = sanitize_text_field($row['label'] ?? '');
+            $message = sanitize_textarea_field($row['message'] ?? '');
+
+            if (empty($label) && empty($message)) {
+                continue;
+            }
+
+            $status_code = isset($row['status_code']) ? intval($row['status_code']) : 403;
+            if ($status_code < 400 || $status_code > 599) {
+                $status_code = 403;
+            }
+
+            $new_input[$new_key] = [
+                'label' => $label,
+                'is_global' => !empty($row['is_global']) ? 1 : 0,
+                'status_code' => $status_code,
+                'message' => $message,
+            ];
+        }
+
+        if (empty($new_input)) {
+            return [];
+        }
+
+        return $new_input;
+    }
+
 
     /**
      * IPアドレス範囲定義のサニタイズ
      */
 
     public function sanitize_ip_range_definitions($input) {
-        $current = get_option('ggc_ip_range_definitions', []);
-        $defaults = ggc_get_default_ip_ranges();
-        $default_keys_map = [];
-        foreach ($defaults as $def_key => $def_val) {
-            $default_keys_map[strtolower($def_key)] = $def_key;
-        }
-
-        if (!is_array($input)) return [];
-
-        $new_input = [];
-
-        $simple_validate_ip_cidr = function ($range) {
-            $range = trim($range);
-            if (empty($range)) return false;
-            if (filter_var($range, FILTER_VALIDATE_IP)) return sanitize_text_field($range);
-            if (strpos($range, '/') !== false) {
-                list($ip, $mask) = explode('/', $range, 2);
-                $mask = intval($mask);
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) && $mask >= 0 && $mask <= 32) return sanitize_text_field($range);
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && $mask >= 0 && $mask <= 128) return sanitize_text_field($range);
-                if (strpos($ip, ':') !== false && preg_match('/^[0-9a-fA-F:]+$/', $ip) && $mask >= 0 && $mask <= 128) return sanitize_text_field($range);
-                if (strpos($ip, '.') !== false && preg_match('/^[0-9.]+$/', $ip) && $mask >= 0 && $mask <= 32) return sanitize_text_field($range);
-            }
-            return false;
-        };
-
-        foreach ($input as $key => $ip_def) {
-            $raw_key = $ip_def['key'] ?? $key;
-            if (empty(trim($raw_key))) continue;
-
-            $lower_key = strtolower($raw_key);
-            $new_key = '';
-            $is_default_key = false;
-
-            if (array_key_exists($lower_key, $default_keys_map)) {
-                $new_key = $default_keys_map[$lower_key];
-                $is_default_key = true;
-            } else {
-                $sanitized_key = sanitize_key($raw_key);
-                $new_key = !empty($sanitized_key) ? $sanitized_key : sanitize_key($key);
-            }
-
-            $ranges_input = '';
-            if (isset($ip_def['ranges'])) {
-                $ranges_input = is_array($ip_def['ranges']) ? implode("\n", array_map('strval', $ip_def['ranges'])) : (string) $ip_def['ranges'];
-            }
-
-            if (!$is_default_key && empty($ranges_input) && empty($ip_def['label']) && empty($ip_def['source_url'])) {
-                continue;
-            }
-
-            // Initialize variables for this loop iteration
-            $loop_last_parse_error = null;
-            $loop_last_parse_time = null;
-            $loop_last_parse_count = 0;
-
-            $ranges = preg_split('/[\r\n,]+/', $ranges_input, -1, PREG_SPLIT_NO_EMPTY);
-            $ranges = array_map('trim', $ranges);
-            $sanitized_ranges_raw = array_values(array_map('sanitize_text_field', array_filter($ranges)));
-            $sanitized_ranges_valid = array_values(array_filter(array_map($simple_validate_ip_cidr, $ranges)));
-
-            $is_auto = !empty($ip_def['is_auto']);
-            $default_def = $current[$new_key] ?? ['source_url' => ''];
-            $source_url_to_save = isset($ip_def['source_url']) ? esc_url_raw(trim($ip_def['source_url'])) : $default_def['source_url'];
-            if (empty($source_url_to_save) && isset($defaults[$new_key]['source_url'])) {
-                $source_url_to_save = $defaults[$new_key]['source_url'];
-            }
-
-            if ($is_auto && !empty($source_url_to_save)) {
-                $parsed = Custom_Crawler_Core::parse_ip_list_from_url($source_url_to_save);
-                $loop_last_parse_time = time();
-
-                if (is_wp_error($parsed)) {
-                    $loop_last_parse_error = $parsed->get_error_message();
-                    add_settings_error('ggc_ips_option_group', 'ggc_parse_failed_' . $new_key, sprintf('%s の自動解析に失敗しました: %s', esc_html($new_key), esc_html($loop_last_parse_error)), 'error');
-                } else {
-                    $parsed_clean = array_values(array_map('sanitize_text_field', $parsed));
-                    $sanitized_ranges_raw = $parsed_clean;
-                    $sanitized_ranges_valid = array_values(array_filter(array_map($simple_validate_ip_cidr, $parsed_clean)));
-                    $loop_last_parse_count = count($sanitized_ranges_raw);
-                }
-            } else {
-                // If not auto-updating on this save, preserve the last known status.
-                $loop_last_parse_error = $current[$new_key]['last_parse_error'] ?? null;
-                $loop_last_parse_time = $current[$new_key]['last_parse_time'] ?? null;
-                $loop_last_parse_count = $current[$new_key]['last_parse_count'] ?? 0;
-            }
-
-            $new_input[$new_key] = [
-                'ranges' => $sanitized_ranges_raw,
-                'validated_ranges' => empty($sanitized_ranges_valid) ? null : $sanitized_ranges_valid,
-                'allow_placeholder' => !empty($ip_def['allow_placeholder']),
-                'label' => sanitize_text_field($ip_def['label'] ?? ($current[$new_key]['label'] ?? '')),
-                'group_label' => sanitize_text_field($ip_def['group_label'] ?? ($current[$new_key]['group_label'] ?? 'その他')),
-                'description' => sanitize_textarea_field($ip_def['description'] ?? ($current[$new_key]['description'] ?? '')),
-                'source_url' => $source_url_to_save,
-                'is_default' => $is_default_key,
-                'is_auto' => $is_auto,
-                'last_parse_error' => $loop_last_parse_error,
-                'last_parse_time' => $loop_last_parse_time,
-                'last_parse_count' => $loop_last_parse_count,
-            ];
-
-            if ($is_auto && $is_default_key && isset($defaults[$new_key])) {
-                $new_input[$new_key]['label'] = $defaults[$new_key]['label'];
-                $new_input[$new_key]['group_label'] = $defaults[$new_key]['group_label'] ?? 'その他';
-                $new_input[$new_key]['description'] = $defaults[$new_key]['description'];
-            }
-        }
-        return $new_input;
+        return Admin_IP_Ranges::sanitize_definitions_1($input);
     }
 
     public function sanitize_browser_block_patterns($input) {
-        $new_input = [];
         $default = ggc_get_default_browser_patterns();
-
-        if (!is_array($input)) return [];
-
-        foreach ($input as $key => $pattern_def) {
-            $new_key = sanitize_key($pattern_def['key'] ?? $key);
-            if (empty($new_key)) continue;
-            if (!is_array($pattern_def)) continue;
-
-            $pattern_val = sanitize_textarea_field($pattern_def['pattern'] ?? '');
-
-            // 完全に空のカスタムエントリーを排除
-            $is_default = isset($default[$new_key]);
-            if (!$is_default && empty($pattern_val) && empty($pattern_def['label'])) {
-                continue;
-            }
-
-            $new_input[$new_key] =
-            [
-                'pattern' => $pattern_val,
-                'label' => sanitize_text_field($pattern_def['label'] ?? ''),
-                'group_label' => sanitize_text_field($pattern_def['group_label'] ?? 'カスタム'),
-                'description' => sanitize_textarea_field($pattern_def['description'] ?? ''),
-                'is_default' => $is_default,
-            ];
-        }
-        return $new_input;
+        return $this->sanitize_ua_definitions_common($input, $default, ['key','label','group_label','description','pattern']);
     }
 
     public function sanitize_default_control_active($input) {
@@ -388,6 +485,641 @@ class Custom_Admin_Settings {
     public function sanitize_ip_update_frequency($input) {
         // allow disabling automatic updates and new frequencies
         return in_array($input, ['disabled', 'hourly', 'twicedaily', 'daily', 'weekly', 'monthly', 'biannually', 'annually']) ? $input : 'daily';
+    }
+
+    private function render_grouped_bots_checklist($selected, $name, $maxHeight = 240, $selected_patterns = null, $patterns_name = null) {
+        $bots = Custom_Crawler_Core::get_allowable_bots();
+        $grouped = [];
+        foreach ($bots as $key => $b) {
+            $group_label = $b['group_label'] ?? 'その他';
+            if (!isset($grouped[$group_label])) $grouped[$group_label] = [];
+            $grouped[$group_label][$key] = $b;
+        }
+
+        if (!is_array($selected)) $selected = [];
+        $name_attr = esc_attr($name) . '[]';
+        $name_key = sanitize_key($name);
+        $has_patterns = !empty($patterns_name);
+        $grouped_patterns = [];
+        if ($has_patterns) {
+            $patterns = Custom_Crawler_Core::get_browser_block_patterns();
+            foreach ($patterns as $pkey => $pdef) {
+                $group_label = $pdef['group_label'] ?? 'その他';
+                if (!isset($grouped_patterns[$group_label])) $grouped_patterns[$group_label] = [];
+                $grouped_patterns[$group_label][$pkey] = $pdef;
+            }
+        }
+        if (!is_array($selected_patterns)) $selected_patterns = [];
+        $patterns_name_attr = $has_patterns ? esc_attr($patterns_name) . '[]' : '';
+
+        $render_group_items = function ($items, $selected_keys, $input_name_attr, $section_prefix) {
+            foreach ($items as $glabel => $list) {
+                $group_id = $section_prefix . '-group-' . sanitize_key($glabel);
+                echo '<h4 class="ggc-settings-group-header" data-target="#' . esc_attr($group_id) . '">';
+                echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+                echo '<strong>' . esc_html($glabel) . '</strong>';
+                echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($group_id) . '"> [全選択/解除] </small>';
+                echo '</h4>';
+                echo '<div id="' . esc_attr($group_id) . '" class="ggc-settings-group-content open" style="display:block;">';
+                foreach ($list as $key => $item) {
+                    $label = $item['label'] ?? $key;
+                    echo '<label class="ggc-item-label">';
+                    echo '<input type="checkbox" name="' . $input_name_attr . '" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $selected_keys), true, false) . '>';
+                    echo esc_html($label);
+                    echo '</label>';
+                }
+                echo '</div>';
+            }
+        };
+
+        $section_id_1 = $name_key . '-ua-def-1';
+        $section_id_2 = $name_key . '-ua-def-2';
+
+        echo '<div class="ggc-scroll-panel" style="max-height:' . intval($maxHeight) . 'px;">';
+
+        echo '<h4 class="ggc-settings-group-header" data-target="#' . esc_attr($section_id_1) . '">';
+        echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+        echo '<strong>User-Agent 定義1</strong>';
+        echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($section_id_1) . '"> [全選択/解除] </small>';
+        echo '</h4>';
+        echo '<div id="' . esc_attr($section_id_1) . '" class="ggc-settings-group-content" style="display:none;">';
+        if (empty($grouped)) {
+            echo '<p class="description ggc-settings-desc">定義がありません。</p>';
+        } else {
+            $render_group_items($grouped, $selected, $name_attr, $section_id_1);
+        }
+        echo '</div>';
+
+
+        if ($has_patterns) {
+            // 全解除時も空配列をPOSTするためhidden inputを追加
+            echo '<input type="hidden" name="' . esc_attr($patterns_name) . '[]" value="">';
+            echo '<h4 class="ggc-settings-group-header" data-target="#' . esc_attr($section_id_2) . '">';
+            echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+            echo '<strong>User-Agent 定義2</strong>';
+            echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($section_id_2) . '"> [全選択/解除] </small>';
+            echo '</h4>';
+            echo '<div id="' . esc_attr($section_id_2) . '" class="ggc-settings-group-content" style="display:none;">';
+            if (empty($grouped_patterns)) {
+                echo '<p class="description ggc-settings-desc">定義がありません。</p>';
+            } else {
+                $render_group_items($grouped_patterns, $selected_patterns, $patterns_name_attr, $section_id_2);
+            }
+            echo '</div>';
+        }
+
+        echo '</div>';
+    }
+
+    private function render_grouped_ip_checklist($selected1, $selected2, $name1, $name2, $maxHeight = 240) {
+        $ip_ranges_1 = GGC_Options::get_ip_range_definitions_1() ?: [];
+        $ip_ranges_2 = GGC_Options::get_ip_range_definitions_2() ?: [];
+
+        $grouped1 = [];
+        foreach ($ip_ranges_1 as $k => $def) {
+            $label = $def['group_label'] ?? 'その他';
+            if (!isset($grouped1[$label])) $grouped1[$label] = [];
+            $grouped1[$label][$k] = $def;
+        }
+
+        $grouped2 = [];
+        foreach ($ip_ranges_2 as $k => $def) {
+            $label = $def['group_label'] ?? 'その他';
+            if (!isset($grouped2[$label])) $grouped2[$label] = [];
+            $grouped2[$label][$k] = $def;
+        }
+
+        if (!is_array($selected1)) $selected1 = [];
+        if (!is_array($selected2)) $selected2 = [];
+
+        $name_attr1 = esc_attr($name1) . '[]';
+        $name_attr2 = esc_attr($name2) . '[]';
+        $name_key1 = sanitize_key($name1);
+        $name_key2 = sanitize_key($name2);
+
+        // presence sentinel fields — allow intentional clearing when checkboxes exist but none checked
+        echo '<input type="hidden" name="' . esc_attr($name1) . '_present" value="1" />';
+        echo '<input type="hidden" name="' . esc_attr($name2) . '_present" value="1" />';
+
+        echo '<div class="ggc-scroll-panel" style="max-height:' . intval($maxHeight) . 'px;">';
+
+        // 範囲1
+        $range1_id = $name_key1 . '-range-1';
+        echo '<h4 class="ggc-settings-group-header" data-target="#' . esc_attr($range1_id) . '">';
+        echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+        echo '<strong>IPアドレス範囲1</strong>';
+        echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($range1_id) . '"> [全選択/解除] </small>';
+        echo '</h4>';
+        echo '<div id="' . esc_attr($range1_id) . '" class="ggc-settings-group-content" style="display:none;">';
+        if (!empty($grouped1)) {
+            foreach ($grouped1 as $glabel => $group) {
+                $group_id = $name_key1 . '-group-' . sanitize_key($glabel);
+                echo '<h4 class="ggc-settings-group-header" data-target="#' . esc_attr($group_id) . '">';
+                echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+                echo '<strong>' . esc_html($glabel) . '</strong>';
+                echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($group_id) . '"> [全選択/解除] </small>';
+                echo '</h4>';
+                echo '<div id="' . esc_attr($group_id) . '" class="ggc-settings-group-content open" style="display:block;">';
+                foreach ($group as $key => $ipd) {
+                    echo '<label class="ggc-item-label">';
+                    echo '<input type="checkbox" name="' . $name_attr1 . '" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $selected1), true, false) . ' /> ';
+                    echo esc_html($ipd['label']);
+                    echo '</label>';
+                }
+                echo '</div>';
+            }
+        } else {
+            echo '<p class="description ggc-settings-desc">定義がありません。</p>';
+        }
+        echo '</div>';
+
+        // 範囲2
+        $range2_id = $name_key2 . '-range-2';
+        echo '<h4 class="ggc-settings-group-header ggc-section-title--spaced" data-target="#' . esc_attr($range2_id) . '">';
+        echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+        echo '<strong>IPアドレス範囲2</strong>';
+        echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($range2_id) . '"> [全選択/解除] </small>';
+        echo '</h4>';
+        echo '<div id="' . esc_attr($range2_id) . '" class="ggc-settings-group-content" style="display:none;">';
+        if (!empty($grouped2)) {
+            foreach ($grouped2 as $glabel => $group) {
+                $group_id = $name_key2 . '-group-' . sanitize_key($glabel);
+                echo '<h4 class="ggc-settings-group-header" data-target="#' . esc_attr($group_id) . '">';
+                echo '<span class="dashicons dashicons-arrow-right-alt2 ggc-settings-arrow"></span>';
+                echo '<strong>' . esc_html($glabel) . '</strong>';
+                echo '<small class="ggc-settings-toggle-all" data-group="' . esc_attr($group_id) . '"> [全選択/解除] </small>';
+                echo '</h4>';
+                echo '<div id="' . esc_attr($group_id) . '" class="ggc-settings-group-content open" style="display:block;">';
+                foreach ($group as $key => $ipd) {
+                    echo '<label class="ggc-item-label">';
+                    echo '<input type="checkbox" name="' . $name_attr2 . '" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $selected2), true, false) . ' /> ';
+                    echo esc_html($ipd['label']);
+                    echo '</label>';
+                }
+                echo '</div>';
+            }
+        } else {
+            echo '<p class="description ggc-settings-desc">定義がありません。</p>';
+        }
+        echo '</div>';
+
+        echo '</div>';
+    }
+
+    private function get_general_settings() {
+        return GGC_Options::get_general_settings();
+    }
+
+    private function render_markdown_global_settings(
+        $markdown_replace_enabled,
+        $markdown_global_template_mode,
+        $markdown_global_template_key,
+        $markdown_templates,
+        $global_markdown_selected_crawlers,
+        $global_markdown_selected_ips,
+        $global_markdown_selected_ips_2
+    ) {
+        // 新しいサブ設定値を取得
+        $md_opts = GGC_Options::get_markdown_options();
+        $ua_eval = $md_opts['ua_eval'];
+        $ip_eval = $md_opts['ip_eval'];
+        ?>
+
+        <tr>
+            <th colspan="2" style="background:#f7f7f7;font-weight:bold;">グローバル設定 評価-マークダウン置換</th>
+        </tr>
+        <tr>
+            <th scope="row">評価方法</th>
+            <td>
+                <select name="ggc_markdown_replace_enabled" id="ggc_markdown_replace_enabled">
+                    <option value="off" <?php selected($markdown_replace_enabled, 'off'); ?>>無効</option>
+                    <option value="on" <?php selected($markdown_replace_enabled, 'on'); ?>>投稿・固定ページ個別設定</option>
+                    <option value="all" <?php selected($markdown_replace_enabled, 'all'); ?>>全ページで設定</option>
+                </select>
+            </td>
+        </tr>
+        <tbody id="ggc-markdown-global-eval-wrapper">
+            <tr>
+                <th scope="row">User-Agentの評価-マークダウン</th>
+                <td>
+                    <label for="ggc_markdown_ua_eval" class="ggc-settings-label">User-Agentの評価-マークダウン：</label>
+                    <select name="ggc_markdown_ua_eval" id="ggc_markdown_ua_eval" class="ggc-settings-select">
+                        <option value="none" <?php selected($ua_eval, 'none'); ?>>設定しない</option>
+                        <option value="blacklist" <?php selected($ua_eval, 'blacklist'); ?>>ブラックリスト</option>
+                        <option value="whitelist" <?php selected($ua_eval, 'whitelist'); ?>>ホワイトリスト</option>
+                        <option value="allow_all" <?php selected($ua_eval, 'allow_all'); ?>>全許可</option>                             
+                        <option value="deny_all" <?php selected($ua_eval, 'deny_all'); ?>>全拒否</option>                   
+                    </select>
+                    <!-- User-Agent 制御リスト（マークダウン向け）をセレクト直下に移動 -->
+                    <div id="ggc-markdown-global-ua-list" class="ggc-markdown-global-list">
+                        <p id="ggc-markdown-ua-description" class="ggc-markdown-global-desc">
+                            <?php
+                            echo ($ua_eval === 'whitelist')
+                                ? 'ホワイトリスト : チェックしたUser-Agent以外をマークダウンに置換します。'
+                                : 'ブラックリスト : チェックしたUser-Agentをマークダウンに置換します。';
+                            ?>
+                        </p>
+                        <p class="ggc-settings-note">User-Agent 制御リスト（マークダウン向け）:</p>
+                        <?php $this->render_grouped_bots_checklist($global_markdown_selected_crawlers, 'ggc_global_markdown_selected_crawlers', 180, GGC_Options::get_global_selected_lists()['markdown_selected_patterns'], 'ggc_global_markdown_selected_patterns'); ?>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">IPアドレスの評価-マークダウン</th>
+                <td>
+                    <label for="ggc_markdown_ip_eval" class="ggc-settings-label">IPアドレスの評価-マークダウン：</label>
+                    <select name="ggc_markdown_ip_eval" id="ggc_markdown_ip_eval" class="ggc-settings-select">
+                        <option value="none" <?php selected($ip_eval, 'none'); ?>>設定しない</option>
+                        <option value="blacklist" <?php selected($ip_eval, 'blacklist'); ?>>ブラックリスト</option>
+                        <option value="whitelist" <?php selected($ip_eval, 'whitelist'); ?>>ホワイトリスト</option>
+                        <option value="allow_all" <?php selected($ip_eval, 'allow_all'); ?>>全許可</option>
+                        <option value="deny_all" <?php selected($ip_eval, 'deny_all'); ?>>全拒否</option>                        
+                    </select>
+                    <!-- IPアドレス制御リスト（マークダウン向け）をセレクト直下に移動 -->
+                    <div id="ggc-markdown-global-ip-list" class="ggc-markdown-global-list" style="margin-top:12px;">
+                        <p id="ggc-markdown-ip-description" class="ggc-markdown-global-desc">
+                            <?php
+                            echo ($ip_eval === 'whitelist')
+                                ? 'ホワイトリスト : チェックしたIP範囲以外をマークダウンに置換します。'
+                                : 'ブラックリスト : チェックしたIP範囲をマークダウンに置換します。';
+                            ?>
+                        </p>
+                        <p class="ggc-settings-note">IPアドレス制御リスト（マークダウン向け）:</p>
+                        <?php $this->render_grouped_ip_checklist($global_markdown_selected_ips, $global_markdown_selected_ips_2, 'ggc_global_markdown_selected_ips', 'ggc_global_markdown_selected_ips_2', 180); ?>
+                    </div>
+                </td>
+            </tr>
+            <tr id="ggc-markdown-global-template-wrapper">
+                <th scope="row">テンプレート選択方法</th>
+                <td>
+                        <div class="ggc-settings-block" style="margin-top:8px;">
+                            <label for="ggc_markdown_global_template_mode" class="ggc-settings-label">テンプレート選択方法：</label>
+                            <select name="ggc_markdown_global_template_mode" id="ggc_markdown_global_template_mode" class="ggc-settings-select">
+                                <option value="select" <?php selected($markdown_global_template_mode, 'select'); ?>>テンプレートを置換、専用表示</option>
+                                <option value="select_raw" <?php selected($markdown_global_template_mode, 'select_raw'); ?>>テンプレートをマークダウンのまま表示置換</option>
+                                <option value="random" <?php selected($markdown_global_template_mode, 'random'); ?>>ランダムにテンプレートを置換、専用表示</option>
+                                <option value="random_raw" <?php selected($markdown_global_template_mode, 'random_raw'); ?>>ランダムにマークダウンのまま表示置換</option>
+                            </select>
+                        </div>
+                        <div id="ggc-markdown-global-template-key" class="<?php echo ($markdown_global_template_mode === 'select' || $markdown_global_template_mode === 'select_raw') ? '' : 'ggc-hidden'; ?>" style="margin-top:8px;">
+                            <label for="ggc_markdown_global_template_key" class="ggc-settings-label">置換テンプレート：</label>
+                            <select name="ggc_markdown_global_template_key" id="ggc_markdown_global_template_key" class="ggc-settings-select--full">
+                                <option value="" <?php selected($markdown_global_template_key, ''); ?>>選択してください...</option>
+                                <?php foreach ($markdown_templates as $tpl_key => $tpl): ?>
+                                    <?php $tpl_key = sanitize_key($tpl_key); ?>
+                                    <option value="<?php echo esc_attr($tpl_key); ?>" <?php selected($markdown_global_template_key, $tpl_key); ?>><?php echo esc_html($tpl['title'] ?? $tpl_key); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </td>
+                </tr>
+        </tbody>
+        <?php
+    }
+
+    private function render_media_global_settings(
+        $global_media_ua_control,
+        $global_media_ip_evaluation,
+        $alt_fixed_featured,
+        $alt_fixed
+    ) {
+        // 評価方法の値を取得（POST優先、なければDB値）
+        $media_eval_mode = isset($_POST['ggc_global_media_eval_mode']) ? sanitize_text_field($_POST['ggc_global_media_eval_mode']) : GGC_Options::get_global_media_options()['media_eval_mode'];
+        $media_display_mode = isset($_POST['ggc_global_media_display_mode']) ? sanitize_text_field($_POST['ggc_global_media_display_mode']) : GGC_Options::get_global_media_display_mode();
+        $featured_display_mode = isset($_POST['ggc_global_featured_display_mode']) ? sanitize_text_field($_POST['ggc_global_featured_display_mode']) : GGC_Options::get_global_featured_display_mode();
+        $media_ua_control = isset($_POST['ggc_global_media_user_agent_control']) ? sanitize_text_field($_POST['ggc_global_media_user_agent_control']) : $global_media_ua_control;
+        $media_ip_evaluation = isset($_POST['ggc_global_media_ip_evaluation']) ? sanitize_text_field($_POST['ggc_global_media_ip_evaluation']) : $global_media_ip_evaluation;
+        ?>
+        <!-- Media-level global settings -->
+        <tr>
+            <th colspan="2" style="background:#f7f7f7;font-weight:bold;">グローバル設定 評価-メディア</th>
+        </tr>
+        <tr>
+            <th scope="row">評価方法</th>
+            <td>
+                <select name="ggc_global_media_eval_mode" id="ggc_global_media_eval_mode_select">
+                    <option value="none" <?php selected($media_eval_mode, 'none'); ?>>無効</option>
+                    <option value="apply_new_posts" <?php selected($media_eval_mode, 'apply_new_posts'); ?>>投稿・固定ページ個別設定</option>
+                    <option value="all" <?php selected($media_eval_mode, 'all'); ?>>全ページで設定</option>
+                </select>
+            </td>
+        </tr>
+        <tr id="ggc-global-featured-display-mode-row">
+            <th scope="row">アイキャッチ画像表示方法</th>
+            <td>
+                <select name="ggc_global_featured_display_mode" id="ggc_global_featured_display_mode_select">
+                    <option value="normal" <?php selected($featured_display_mode, 'normal'); ?>>通常表示</option>
+                    <option value="alt_replace" <?php selected($featured_display_mode, 'alt_replace'); ?>>評価に従ってテキストに置換</option>
+                    <option value="hide" <?php selected($featured_display_mode, 'hide'); ?>>評価に従って非表示</option>
+                </select>
+                <p class="ggc-settings-desc-tight">アイキャッチ画像の表示方法を設定します。メディア表示モードとは独立して制御できます。</p>
+            </td>
+        </tr>
+                <!-- PHPではggc-hidden-rowを付与しない。JSでのみ制御 -->
+        <tr id="ggc-global-media-text-settings">
+            <th scope="row">アイキャッチ画像の代替テキスト</th>
+            <td>
+                <input type="text" id="ggc_alt_fixed_text_featured" name="ggc_alt_fixed_text_featured" value="<?php echo esc_attr($alt_fixed_featured); ?>" class="regular-text" placeholder="アイキャッチ画像の代替テキスト（使用時）">
+                <p class="description">アイキャッチ画像が表示除外された場合に代替テキストとして使用するテキストを指定します。未入力の場合は通常表示します。</p>
+            </td>
+        </tr>
+                <tr id="ggc-global-media-display-mode-row">
+            <th scope="row">メディア表示モード</th>
+            <td>
+                <select name="ggc_global_media_display_mode" id="ggc_global_media_display_mode_select">
+                    <option value="normal" <?php selected($media_display_mode, 'normal'); ?>>通常表示</option>
+                    <option value="alt_replace" <?php selected($media_display_mode, 'alt_replace'); ?>>評価に従ってテキストに置換</option>
+                    <option value="hide" <?php selected($media_display_mode, 'hide'); ?>>評価に従って非表示</option>
+                </select>
+                <p class="ggc-settings-desc-tight">コンテンツ内のメディア（画像・ギャラリー等）の表示モードを設定します。</p>
+            </td>
+        </tr>
+        <!-- PHPではggc-hidden-rowを付与しない。JSでのみ制御 -->
+        <tr id="ggc-global-media-text-settings-2">
+            <th scope="row">代替テキスト</th>
+            <td>
+                <input type="text" id="ggc_alt_fixed_text" name="ggc_alt_fixed_text" value="<?php echo esc_attr($alt_fixed); ?>" class="regular-text" placeholder="代替テキスト（使用時）">
+                <p class="description">メディアを代替テキストとして使用するテキストにする場合に指定します。メディア制御でブラックリスト/ホワイトリストを選択した場合に有効になります。</p>
+            </td>
+        </tr>
+        <tr id="ggc-global-media-ua-row">
+            <th scope="row">User-Agentの評価-メディア</th>
+            <td>
+                <select name="ggc_global_media_user_agent_control" id="ggc_global_media_user_agent_control_select">
+                    <option value="none" <?php selected($media_ua_control, 'none'); ?>>設定しない</option>
+                    <option value="global_blacklist" <?php selected($media_ua_control, 'global_blacklist'); ?>>ブラックリスト</option>
+                    <option value="global_whitelist" <?php selected($media_ua_control, 'global_whitelist'); ?>>ホワイトリスト</option>
+                    <option value="allow_all" <?php selected($media_ua_control, 'allow_all'); ?>>全許可</option>                   
+                    <option value="deny_all" <?php selected($media_ua_control, 'deny_all'); ?>>全拒否</option>
+                </select>
+                <div id="ggc-global-media-ua-list" class="ggc-settings-block">
+                    <p class="ggc-settings-desc-tight">
+                        <?php echo ($media_ua_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたUser-Agentはメディア表示、それ以外は代替テキスト表示します。</strong>' : '<strong>ブラックリスト : チェックしたUser-Agentは代替テキスト表示、それ以外はメディア表示します。</strong>'; ?>
+                    </p>
+                    <p class="ggc-settings-note">User-Agent 制御リスト（メディア向け）:</p>
+                    <?php $lists = GGC_Options::get_global_selected_lists(); $this->render_grouped_bots_checklist($lists['media_selected_crawlers'], 'ggc_global_media_selected_crawlers', 240, $lists['media_selected_patterns'], 'ggc_global_media_selected_patterns'); ?>
+                </div>
+            </td>
+        </tr>
+        <tr id="ggc-global-media-ip-row">
+            <th scope="row">IPアドレスの評価-メディア</th>
+            <td>
+                <select name="ggc_global_media_ip_evaluation" id="ggc_global_media_ip_evaluation_select">
+                    <option value="none" <?php selected($media_ip_evaluation, 'none'); ?>>設定しない</option>
+                    <option value="global_blacklist" <?php selected($media_ip_evaluation, 'global_blacklist'); ?>>ブラックリスト</option>
+                    <option value="global_whitelist" <?php selected($media_ip_evaluation, 'global_whitelist'); ?>>ホワイトリスト</option>
+                    <option value="allow_all" <?php selected($media_ip_evaluation, 'allow_all'); ?>>全許可</option>
+                    <option value="deny_all" <?php selected($media_ip_evaluation, 'deny_all'); ?>>全拒否</option>
+                </select>
+                <div id="ggc-global-media-ip-list" class="ggc-settings-block">
+                    <p class="ggc-settings-desc-tight">
+                        <?php echo ($media_ip_evaluation === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたIP範囲はメディア表示、それ以外は代替テキスト表示します。</strong>' : '<strong>ブラックリスト : チェックしたIP範囲は代替テキスト表示、それ以外はメディア表示します。</strong>'; ?>
+                    </p>
+                    <p class="ggc-settings-note">IPアドレス制御リスト（メディア向け）:</p>
+                    <?php $lists = GGC_Options::get_global_selected_lists(); $this->render_grouped_ip_checklist($lists['media_selected_ips'], $lists['media_selected_ips_2'], 'ggc_global_media_selected_ips', 'ggc_global_media_selected_ips_2', 240); ?>
+                </div>
+            </td>
+        </tr>
+        <?php
+    }
+
+    // ページ評価セクションを出力するヘルパー
+    private function render_page_global_settings() {
+        $opts = GGC_Options::get_page_eval_global_options();
+        $page_eval_mode   = $opts['global_page_mode'];
+        $page_ua_control  = $opts['global_page_ua_control'];
+        $page_ip_control  = $opts['global_page_ip_control'];
+        $ua_redirect_mode = GGC_Options::get_global_block_options('ua')['redirect_mode'];
+        $ip_redirect_mode = GGC_Options::get_global_block_options('ip')['redirect_mode'];
+        $ua_redirect_url  = GGC_Options::get_global_block_options('ua')['redirect_url'];
+        $ip_redirect_url  = GGC_Options::get_global_block_options('ip')['redirect_url'];
+        $ua_block_message_key = GGC_Options::get_global_block_options('ua')['block_message_key'];
+        $ip_block_message_key = GGC_Options::get_global_block_options('ip')['block_message_key'];
+        $page_eval_messages = GGC_Options::get_page_eval_messages();
+        $cleared = GGC_Options::is_clear_all_done();
+        ?>
+        <tr>
+            <th colspan="2" style="background:#f7f7f7;font-weight:bold;">グローバル設定 評価-ページ</th>
+        </tr>
+        <tr>
+            <th scope="row">評価方法</th>
+            <td>
+                <select name="ggc_global_page_eval_mode" id="ggc_global_page_eval_mode_select">
+                    <option value="none" <?php selected($page_eval_mode, 'none'); ?>>無効</option>
+                    <option value="apply_new_posts" <?php selected($page_eval_mode, 'apply_new_posts'); ?>>投稿・固定ページ個別設定</option>
+                    <option value="all" <?php selected($page_eval_mode, 'all'); ?>>全ページで設定</option>
+                </select>
+            </td>
+        </tr>
+        <tr id="ggc-global-page-ua-row" class="<?php echo (in_array($page_ua_control, ['global_blacklist','global_whitelist']) || in_array($page_ip_control, ['global_blacklist','global_whitelist'])) ? '' : 'ggc-hidden-row'; ?>">
+            <th scope="row">User-Agentの評価-ページ</th>
+            <td>
+                <select name="ggc_global_page_user_agent_control" id="ggc_global_page_user_agent_control_select">
+                    <option value="none" <?php selected($page_ua_control, 'none'); ?>>設定しない</option>
+                    <option value="global_blacklist" <?php selected($page_ua_control, 'global_blacklist'); ?>>ブラックリスト</option>
+                    <option value="global_whitelist" <?php selected($page_ua_control, 'global_whitelist'); ?>>ホワイトリスト</option>
+                    <option value="allow_all" <?php selected($page_ua_control, 'allow_all'); ?>>全許可</option>
+                    <option value="deny_all" <?php selected($page_ua_control, 'deny_all'); ?>>全拒否</option>
+                </select>
+                <div id="ggc-global-page-ua-list" class="ggc-settings-block">
+                    <p class="ggc-settings-desc-tight">
+                        <?php echo ($page_ua_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたUser-Agentをアクセス許可します。</strong>' : '<strong>ブラックリスト : チェックしたUser-Agentをアクセス拒否します。</strong>'; ?>
+                    </p>
+                    <p class="ggc-settings-note">User-Agent 制御リスト（全設定）:</p>
+                    <?php $lists = GGC_Options::get_global_selected_lists(); $this->render_grouped_bots_checklist($lists['selected_crawlers'], 'ggc_global_selected_crawlers', 240, $lists['selected_patterns'], 'ggc_global_selected_patterns'); ?>
+                    <div id="ggc-global-page-ua-redirect-row" class="ggc-settings-block" style="margin-top:10px;">
+                        <label for="ggc_global_ua_redirect_mode_select" class="ggc-settings-label">ページ評価の動作</label>
+                        <select name="ggc_global_ua_redirect_mode" id="ggc_global_ua_redirect_mode_select">
+                            <option value="block" <?php selected($ua_redirect_mode, 'block'); ?>>アクセスをブロックする</option>
+                            <option value="redirect" <?php selected($ua_redirect_mode, 'redirect'); ?>>リダイレクトする</option>
+                        </select>
+                        <div id="ggc-global-ua-block-message" class="ggc-settings-block" style="margin-top:8px;<?php echo ($ua_redirect_mode === 'block') ? '' : 'display:none;'; ?>">
+                            <label for="ggc_global_ua_block_message_key" class="ggc-settings-label">メッセージ内容</label>
+                            <select name="ggc_global_ua_block_message_key" id="ggc_global_ua_block_message_key" class="ggc-settings-select--full">
+                                <option value="">デフォルト</option>
+                                <?php foreach ($page_eval_messages as $key => $def): ?>
+                                    <?php if ($key === 'default_block' || !($def['is_global'] ?? 0)) continue; ?>
+                                    <?php $label = $def['label'] ?? $key; ?>
+                                    <option value="<?php echo esc_attr($key); ?>" <?php selected($ua_block_message_key, $key); ?>><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div id="ggc-global-ua-redirect-url" class="ggc-settings-block" style="margin-top:8px;<?php echo ($ua_redirect_mode === 'redirect') ? '' : 'display:none;'; ?>">
+                            <input type="text" name="ggc_global_ua_redirect_url" value="<?php echo esc_attr($ua_redirect_url); ?>" class="regular-text" placeholder="https://example.com/" />
+                            <p class="description ggc-settings-desc-compact">User-Agent の評価結果に応じて、このURLへリダイレクトします。</p>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        <tr id="ggc-global-page-ip-row" class="<?php echo (in_array($page_ua_control, ['global_blacklist','global_whitelist']) || in_array($page_ip_control, ['global_blacklist','global_whitelist'])) ? '' : 'ggc-hidden-row'; ?>">
+            <th scope="row">IPアドレスの評価-ページ</th>
+            <td>
+                <select name="ggc_global_page_ip_control" id="ggc_global_page_ip_control_select">
+                    <option value="none" <?php selected($page_ip_control, 'none'); ?>>設定しない</option>
+                    <option value="global_blacklist" <?php selected($page_ip_control, 'global_blacklist'); ?>>ブラックリスト</option>
+                    <option value="global_whitelist" <?php selected($page_ip_control, 'global_whitelist'); ?>>ホワイトリスト</option>
+                    <option value="allow_all" <?php selected($page_ip_control, 'allow_all'); ?>>全許可</option>
+                    <option value="deny_all" <?php selected($page_ip_control, 'deny_all'); ?>>全拒否</option>
+                </select>
+                <div id="ggc-global-page-ip-list" class="ggc-settings-block">
+                    <p class="ggc-settings-desc-tight">
+                        <?php echo ($page_ip_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたIP範囲をアクセス許可します。</strong>' : '<strong>ブラックリスト : チェックしたIP範囲をアクセス拒否します。</strong>'; ?>
+                    </p>
+                    <p class="ggc-settings-note">IPアドレス制御リスト（全設定）:</p>
+                    <?php $global_selected = GGC_Options::get_global_selected_lists(); $this->render_grouped_ip_checklist($global_selected['selected_ips'] ?? [], $global_selected['selected_ips_2'] ?? [], 'ggc_global_selected_ips', 'ggc_global_selected_ips_2', 240); ?>
+                    <div id="ggc-global-page-ip-redirect-row" class="ggc-settings-block" style="margin-top:10px;">
+                        <label for="ggc_global_ip_redirect_mode_select" class="ggc-settings-label">ページ評価の動作</label>
+                        <select name="ggc_global_ip_redirect_mode" id="ggc_global_ip_redirect_mode_select">
+                            <option value="block" <?php selected($ip_redirect_mode, 'block'); ?>>アクセスをブロックする</option>
+                            <option value="redirect" <?php selected($ip_redirect_mode, 'redirect'); ?>>リダイレクトする</option>
+                        </select>
+                        <div id="ggc-global-ip-block-message" class="ggc-settings-block" style="margin-top:8px;<?php echo ($ip_redirect_mode === 'block') ? '' : 'display:none;'; ?>">
+                            <label for="ggc_global_ip_block_message_key" class="ggc-settings-label">メッセージ内容</label>
+                            <select name="ggc_global_ip_block_message_key" id="ggc_global_ip_block_message_key" class="ggc-settings-select--full">
+                                <option value="">デフォルト</option>
+                                <?php foreach ($page_eval_messages as $key => $def): ?>
+                                    <?php if ($key === 'default_block' || !($def['is_global'] ?? 0)) continue; ?>
+                                    <?php $label = $def['label'] ?? $key; ?>
+                                    <option value="<?php echo esc_attr($key); ?>" <?php selected($ip_block_message_key, $key); ?>><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div id="ggc-global-ip-redirect-url" class="ggc-settings-block" style="margin-top:8px;<?php echo ($ip_redirect_mode === 'redirect') ? '' : 'display:none;'; ?>">
+                            <input type="text" name="ggc_global_ip_redirect_url" value="<?php echo esc_attr($ip_redirect_url); ?>" class="regular-text" placeholder="https://example.com/" />
+                            <p class="description ggc-settings-desc-compact">IP評価の結果に応じて、このURLへリダイレクトします。</p>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        <script>
+        jQuery(function($){
+            function togglePageUAList() {
+                var val = $('#ggc_global_page_user_agent_control_select').val();
+                // show the UA list and redirect/block options for any mode that
+                // actually performs evaluation (blacklist, whitelist, allow_all,
+                // deny_all)
+                if(val === 'global_blacklist' || val === 'global_whitelist' || val === 'allow_all' || val === 'deny_all'){
+                    $('#ggc-global-page-ua-list').show();
+                    $('#ggc-global-page-ua-redirect-row').show();
+                }else{
+                    $('#ggc-global-page-ua-list').hide();
+                    $('#ggc-global-page-ua-redirect-row').hide();
+                }
+            }
+            function togglePageIPList() {
+                var val = $('#ggc_global_page_ip_control_select').val();
+                if(val === 'global_blacklist' || val === 'global_whitelist' || val === 'allow_all' || val === 'deny_all'){
+                    $('#ggc-global-page-ip-list').show();
+                    $('#ggc-global-page-ip-redirect-row').show();
+                }else{
+                    $('#ggc-global-page-ip-list').hide();
+                    $('#ggc-global-page-ip-redirect-row').hide();
+                }
+            }
+            function toggleUAAction() {
+                if($('#ggc_global_ua_redirect_mode_select').val() === 'block'){
+                    $('#ggc-global-ua-block-message').show();
+                    $('#ggc-global-ua-redirect-url').hide();
+                }else{
+                    $('#ggc-global-ua-block-message').hide();
+                    $('#ggc-global-ua-redirect-url').show();
+                }
+            }
+            function toggleIPAction() {
+                if($('#ggc_global_ip_redirect_mode_select').val() === 'block'){
+                    $('#ggc-global-ip-block-message').show();
+                    $('#ggc-global-ip-redirect-url').hide();
+                }else{
+                    $('#ggc-global-ip-block-message').hide();
+                    $('#ggc-global-ip-redirect-url').show();
+                }
+            }
+            function togglePageRowsByEvalMode() {
+                var mode = $('#ggc_global_page_eval_mode_select').val();
+                if(mode === 'all'){
+                    $('#ggc-global-page-ua-row, #ggc-global-page-ip-row').removeClass('ggc-hidden-row');
+                }else{
+                    $('#ggc-global-page-ua-row, #ggc-global-page-ip-row').addClass('ggc-hidden-row');
+                }
+            }
+            // イベントバインド
+            $('#ggc_global_page_eval_mode_select').on('change', function(){
+                togglePageRowsByEvalMode();
+            });
+            $('#ggc_global_page_user_agent_control_select').on('change', function(){
+                togglePageUAList();
+                toggleUAAction();
+            });
+            $('#ggc_global_page_ip_control_select').on('change', function(){
+                togglePageIPList();
+                toggleIPAction();
+            });
+            $('#ggc_global_ua_redirect_mode_select').on('change', toggleUAAction);
+            $('#ggc_global_ip_redirect_mode_select').on('change', toggleIPAction);
+            // 初期表示制御（ページロード時にも必ず実行）
+            $(document).ready(function(){
+                togglePageRowsByEvalMode();
+                togglePageUAList();
+                togglePageIPList();
+                toggleUAAction();
+                toggleIPAction();
+            });
+        });
+        </script>
+        <?php
+    }
+
+    private function render_ip_update_settings($ip_update_frequency) {
+        ?>
+        <table class="form-table">
+            <tr>
+                <th colspan="2" style="background:#f7f7f7;font-weight:bold;">IPアドレス自動更新設定</th>
+            </tr>
+            <tr>
+                <th scope="row">
+                    <label for="ggc_ip_update_frequency">IPアドレスの自動更新頻度</label>
+                </th>
+                <td>
+                    <select name="ggc_ip_update_frequency" id="ggc_ip_update_frequency">
+                        <option value="disabled" <?php selected($ip_update_frequency, 'disabled'); ?>>停止</option>
+                        <option value="hourly" <?php selected($ip_update_frequency, 'hourly'); ?>>毎時</option>
+                        <option value="twicedaily" <?php selected($ip_update_frequency, 'twicedaily'); ?>>半日</option>
+                        <option value="daily" <?php selected($ip_update_frequency, 'daily'); ?>>毎日</option>
+                        <option value="weekly" <?php selected($ip_update_frequency, 'weekly'); ?>>毎週</option>
+                        <option value="monthly" <?php selected($ip_update_frequency, 'monthly'); ?>>毎月</option>
+                        <option value="biannually" <?php selected($ip_update_frequency, 'biannually'); ?>>半年</option>
+                        <option value="annually" <?php selected($ip_update_frequency, 'annually'); ?>>毎年</option>
+                    </select>
+                    <p class="description">GooglebotやGPTBotのIPアドレスリストを更新する頻度を設定します。</p>
+                </td>
+            </tr>
+            <tr>
+                <th colspan="2" style="background:#f7f7f7;font-weight:bold;">その他の設定</th>
+            </tr>
+            <tr>
+                <th scope="row">
+                    おすすめ設定のインポート
+                </th>
+                <td>
+                    <?php $import_url = wp_nonce_url( admin_url('admin.php?action=ggc_import_default_settings'), 'ggc_import_defaults_nonce' ); ?>
+                    <a href="<?php echo esc_url($import_url); ?>" class="button button-secondary">おすすめ設定をインポートする</a>
+                    <p class="description">User-Agent, IPアドレス範囲, 不正UAパターン、マークダウンテンプレートの推奨初期設定をインポートします。既存のカスタム設定は上書きされません。</p>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">
+                    全データのクリア
+                </th>
+                <td>
+                    <?php $clear_url = wp_nonce_url( admin_url('admin-post.php?action=ggc_clear_all_data'), 'ggc_clear_all_data_nonce' ); ?>
+                    <a href="<?php echo esc_url($clear_url); ?>" class="button button-secondary" onclick="return confirm('設定オプション・投稿/メディアのメタデータ・IP更新履歴をすべて削除します。投稿編集画面で設定した各種オプションもリセットされます。よろしいですか？');">すべての保存データをクリアする</a>
+                    <p class="description">設定画面の保存済みオプションや、投稿/メディア編集画面に保存されたメタデータ（UA/IP制御など）を含むすべてのデータを削除します。プラグインのバージョンアップで動作がおかしい場合などにお使いください。</p>
+                </td>
+            </tr>
+        </table>
+        <?php
     }
 
 
@@ -401,7 +1133,7 @@ class Custom_Admin_Settings {
      */
     private function render_nav_tabs($current_tab) {
         echo '<nav class="nav-tab-wrapper">';
-        foreach ($this->tabs as $tab_key => $tab_label) {
+        foreach (self::TABS as $tab_key => $tab_label) {
             $active_class = ($current_tab === $tab_key) ? 'nav-tab-active' : '';
             $url = add_query_arg(['page' => 'ggc-crawler-definitions', 'tab' => $tab_key], admin_url('options-general.php'));
             echo '<a href="' . esc_url($url) . '" class="nav-tab ' . esc_attr($active_class) . '">' . esc_html($tab_label) . '</a>';
@@ -413,13 +1145,30 @@ class Custom_Admin_Settings {
      * 設定ページ全体
      */
     public function settings_page_html() {
-        if (!current_user_can('manage_options')) {
+        if (! Admin_Utils::current_user_can_manage_options()) {
             return;
         }
 
         $active_tab = $this->get_current_tab();
         ?>
         <div class="wrap">
+
+            <div style="background: linear-gradient(90deg, #f7fafc 60%, #e3e9f3 100%); border: 1px solid #d1d5db; border-radius: 8px; padding: 1.5em 2em; margin-bottom: 2em; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+                <div style="font-size:1.25em; font-weight:bold; margin-bottom:0.5em; display:flex; align-items:center; gap:0.5em;">
+                    <span style="font-size:1.5em;">🔒</span> クローラー個別制御（Custom Crawler Control）
+                </div>
+                <div style="font-size:1.05em; color:#222; margin-bottom:0.7em;">
+                    投稿・固定ページ単位で、検索エンジン・AIクローラー・不正ボットのアクセスを <b>User-Agent</b> / <b>IPアドレス</b> で精密に制御できる <b>管理者向け WordPress プラグイン</b>です。アクセス制限を行ったり、画像などのメディアをテキストに置換可能です。<br>
+                    <span style="color:#b91c1c; font-size:0.98em;">(完全にアクセスを防ぐ保証はありません。ご了承ください。詳しくは「プラグインの使い方」タブやGitHubリポジトリをご覧ください。)</span>
+                </div>
+                <div style="margin-bottom:0.3em;">
+                    <a href="https://github.com/donnma777/smart-access-control" target="_blank" style="text-decoration:none; color:#2563eb; font-weight:bold;">🔗 GitHub : リポジトリを見る</a>
+                </div>
+                <div style="color:#555; font-size:0.98em;">
+                    🔗 作者 : <a href="https://x.com/donnma777" target="_blank">donnma777</a> (<a href="https://donnma.com/" target="_blank">donnma.com</a>)
+                </div>
+            </div>
+
             <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
             <?php $this->render_nav_tabs($active_tab); ?>
@@ -436,6 +1185,16 @@ class Custom_Admin_Settings {
                         case 'general':
                             settings_fields('ggc_general_option_group');
                             do_settings_sections('ggc_tab_general');
+                            break;
+                        case 'markdown':
+                            // マークダウンタブでもグローバルIPリスト保存のためgeneral_option_groupを必ず出力
+                            settings_fields('ggc_general_option_group');
+                            settings_fields('ggc_markdown_option_group');
+                            do_settings_sections('ggc_tab_markdown');
+                            break;
+                        case 'page_eval':
+                            settings_fields('ggc_page_eval_option_group');
+                            do_settings_sections('ggc_tab_page_eval');
                             break;
                         case 'bots':
                             settings_fields('ggc_bots_option_group');
@@ -459,7 +1218,12 @@ class Custom_Admin_Settings {
                             break;
                     }
 
-                    submit_button('設定を保存');
+                    if ($active_tab === 'markdown') {
+                        // markdownタブは各項目変更時に自動保存するため、下部ボタンは表示しない
+                        echo '<p class="description">※このタブでは項目を変更すると自動的に保存されます。手動のボタンはありません。</p>';
+                    } else {
+                        submit_button('設定を保存');
+                    }
                     ?>
                 </form>
             <?php endif; ?>
@@ -467,621 +1231,263 @@ class Custom_Admin_Settings {
         <?php
     }
 
-    /**
-     * アプリの使い方セクションの表示
-     */
-    public function render_usage_section() {
-        ?>
-        <div class="ggc-usage-section" style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; margin-top: 20px; max-width: 1000px;">
-            <h2>アプリの使い方</h2>
-            <p>このプラグインは、WordPressの投稿や固定ページごとに、特定のクローラー（検索エンジン、AIボットなど）やIPアドレスからのアクセスを制御するための強力なツールです。</p>
-
-            <div class="notice notice-error inline" style="margin: 15px 0; padding: 15px;">
-                <h3 style="margin-top: 0;">⚠️ 重要な注意事項と免責事項</h3>
-
-                <h4 style="margin-bottom: 5px;">1. 制御の優先順位と技術的制限</h4>
-                <p>本プラグインは <strong>WordPress (PHP) レイヤー</strong> で動作します。そのため、以下の制限があります。</p>
-                <ul style="list-style-type: disc; margin-left: 20px;">
-                    <li><strong>robots.txt やサーバー設定が優先されます:</strong> robots.txt、Webサーバー設定（Apache/Nginx）、WAF、CDNなどで拒否されているアクセスは、本プラグインに到達する前にブロックされます。</li>
-                    <li><strong>PHPが実行されないアクセスは制御できません:</strong> 画像ファイル、CSS、JSなどの静的ファイルへの直接アクセスや、キャッシュプラグイン（WP Super Cacheなど）によって生成された静的HTMLへのアクセスは、PHPを経由しないため制御できません。<br>
-                    <strong>対策:</strong> 会員限定ページなど重要なページでは、キャッシュプラグインの除外設定を行ってください。</li>
-                    <li><strong>表示するブラウザのキャッシュが残っている場合、ページが表示されたり、画像が表示されたままになる事があります。</li>
-                </ul>
-
-                <h4 style="margin-bottom: 5px;">2. 完全なブロックの保証はありません</h4>
-                <ul style="list-style-type: disc; margin-left: 20px;">
-                    <li><strong>UA偽装:</strong> 悪意のあるクローラーが一般的なブラウザの User-Agent を偽装した場合、UA判定だけでは防げないことがあります（IP制限との併用を推奨）。</li>
-                    <li><strong>保証の限界:</strong> 本プラグインは、アクセス制御の労力を減らし、既知のボットを効率的に管理するためのツールです。完全なセキュリティ防御が必要な場合は、WAFなどの導入をご検討ください。</li>
-                </ul>
-
-                <h4 style="margin-bottom: 5px;">3. 設定時の注意</h4>
-                <ul style="list-style-type: disc; margin-left: 20px;">
-                    <li><strong>自分自身をブロックしない:</strong> 特に「IPアドレス評価」でホワイトリスト（許可）モードを使用する場合、自分のIPアドレスを含めないとページを閲覧できなくなります（管理画面には影響しません）。</li>
-                </ul>
-            </div>
-
-            <hr>
-
-            <h3>1. 設定のステップ</h3>
-
-            <h4>Step 1: 定義リストの作成（この画面）</h4>
-            <p>まず、制御に使用する「リスト」を作成します。初期設定として「おすすめ設定をインポート」することをお勧めします。</p>
-            <table class="widefat striped" style="margin-bottom: 20px;">
-                <thead>
-                    <tr>
-                        <th style="width: 20%;">タブ名</th>
-                        <th>用途例</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>User-Agent 定義1</strong></td>
-                        <td>Googlebot, Bingbot, GPTBot などの「既知のボット」を登録します。これらは通常、特定の目的でアクセスしてくる善良なボットです。</td>
-                    </tr>
-                    <tr>
-                        <td><strong>User-Agent 定義2</strong></td>
-                        <td>「headless」, 「selenium」, 「python」 など、一般的なブラウザではないアクセスや、悪意のあるスクレイピングツールを検出するための「パターン（部分一致）」を登録します。</td>
-                    </tr>
-                    <tr>
-                        <td><strong>IPアドレス範囲 1 & 2</strong></td>
-                        <td>許可または拒否したいIPアドレスの範囲（CIDR形式）を登録します。<br>
-                        GoogleやOpenAIなどの公開IPリストURLを設定し「自動更新」を有効にすると、定期的に最新のIP範囲を取り込みます。</td>
-                    </tr>
-                </tbody>
-            </table>
-
-            <h4>Step 2: 設定画面の一般設定</h4>
-            <p>まず「一般設定」タブでグローバル設定を決めます。ここでの選択が投稿画面、固定ページより<strong>優先</strong>されます。</p>
-            <ul>
-                <li><strong>グローバル設定 User-Agent-ページ : </strong>User-Agentでアクセス制限の設定を行います。</li>
-                <li><strong>グローバル設定 IPアドレスの評価-ページ : </strong>IPアドレスでアクセス制限の設定を行います。</li>
-                <li><strong>グローバル設定 User-Agent-メディア : </strong>User-Agentでメディア制御の設定を行います。</li>
-                <li><strong>グローバル設定 IPアドレスの評価-メディア : </strong>IPアドレスでメディア制御の設定を行います。</li>
-                <li><strong>アイキャッチ画像の代替テキスト（ブラックリスト/ホワイトリスト使用時）: </strong>グローバル設定でブラックリスト、ホワイトリスト設定した場合にアイキャッチ画像を代替テキストにします。</li>
-                <Li><strong>代替テキスト（ブラックリスト/ホワイトリスト使用時）: </strong>グローバル設定でブラックリスト、ホワイトリスト設定した場合にメディアを代替テキストにします。</li>
-                <li><strong>IPアドレスの自動更新頻度 : </strong>IPアドレス範囲の自動更新の頻度を設定します。</li>
-                <li><strong>おすすめ設定のインポート : </strong>設定の推奨値をインポートします。</li>
-                <li><strong>全データのクリア : </strong>すべての設定データを初期化します。プラグインのアップデートやトラブルシューティング時に使用してください。</li>
-            </ul>
-
-            <h4>Step 3: 投稿・固定ページでの適用</h4>
-            <p>記事の投稿画面（または固定ページの編集画面）のサイドバーにある「アクセス制御」ボックスで設定します。</p>
-            <ul>
-                <li><strong>User-Agent の評価-ページ / IPアドレスの評価-ページ : </strong> アクセス制限の設定を行います。</li>
-                <li><strong>User-Agent の評価 - メディア / IPアドレスの評価 - メディア : </strong> メディアを代替テキストに置換する設定を行います。</li>
-                <li><strong>アイキャッチ画像の代替テキスト : </strong>アイキャッチ画像の代替テキストを置換する設定を行います。空欄の場合は置換しません。</li>
-                <li><strong>代替テキスト : </strong>「メディア選択」→「ブロック」→「アクセス制限」内の「代替えテキスト」入力でメディアを代替テキストに置換します。空欄の場合は置換しません。メディア単位で設定可能です。</li>
-            </ul>
-
-            <hr>
-
-            <h3>2. 判定の優先順位とロジック</h3>
-            <p>アクセスがあった際、以下の順序で評価が行われます。どちらかで「拒否」と判定された時点でアクセスはブロックされます。</p>
-            <ol>
-                <li><strong>グローバル設定の優先:</strong>
-                    <ul>
-                        <li>「グローバル設定」は設定画面の「一般設定」タブで決定されます。</li>    
-                        <li>「グローバル設定」＞「投稿ページ・固定ページ」の優先度で制御が行われます。</li>                
-                    </ul>
-                </li>
-                <li><strong> User-Agent-ページ/IPアドレスの評価-ページ:</strong>
-                    <ul>
-                        <li>「一般設定」タブで「アクセス制御設定を適用しない」を選択している場合、投稿ページ、固定ページごとの設定（ブラックリスト/ホワイトリスト等）に関わらず、<strong>すべてのアクセス制御が無効化</strong>されます。</li>
-                        <li>「一般設定」タブで「アクセス制限を新規投稿で適用」を選択している場合のみ、記事ごとの設定が優先されます。</li>
-                        <li>「一般設定」タブで「全ページでブラックリスト」/「全ページでホワイトリスト」を選択している場合は、設定画面のリストが常に優先されます。</li>
-                    </ul>
-                </li>
-                <li><strong> User-Agent-メディア/ IPアドレスの評価-メディア:</strong>
-                    <ul>
-                        <li>「一般設定」タブで「メディア制御設定を適用しない」を選択している場合、投稿ページ、固定ページごとの設定（ブラックリスト/ホワイトリスト等）に関わらず、<strong>すべてのメディア制御が無効化</strong>されます。</li>
-                        <li>「一般設定」タブで「メディア制限を新規投稿で適用」を選択している場合のみ、記事ごとの設定が優先されます。</li>
-                        <li>「一般設定」タブで「全ページでブラックリスト」/「全ページでホワイトリスト」を選択している場合は、設定画面のリストが常に優先されます。</li>
-                    </ul>
-                </li>
-
-                <li><strong>User-Agent 評価:</strong> ブラウザ名（User-Agent）が一致した場合に評価されます。</li>
-                <li><strong>IPアドレス 評価:</strong> UA評価を通過した場合、次にIPアドレスが評価されます。</li>
-
-                <li><strong>各モードの適用範囲:</strong>
-                    <table class="widefat striped" style="margin-top:6px; max-width: 820px;">
-                        <thead>
-                            <tr>
-                                <th style="width: 18%;">モード</th>
-                                <th style="width: 42%;">モードの解説</th>
-                                <th style="width: 20%;">ページ</th>
-                                <th style="width: 20%;">メディア</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><strong>ブラックリスト</strong></td>
-                                <td>一致したものを拒否、それ以外は許可</td>
-                                <td>選択したものをアクセス制限、それ以外は許可します。</td>
-                                <td>選択したものをメディアを代替テキストに変更。それ以外はメディアを表示します。</td>
-                            </tr>
-                            <tr>
-                                <td><strong>ホワイトリスト</strong></td>
-                                <td>一致したものだけ許可、それ以外は拒否</td>
-                                <td>選択したものだけアクセス許可、それ以外は拒否します。</td>
-                                <td>選択したものはメディアを表示、それ以外は代替テキストに変更します。</td>
-                            </tr>
-                            <tr>
-                                <td><strong>全許可</strong></td>
-                                <td>すべて許可（評価なし）</td>
-                                <td>アクセス制限をしません。</td>
-                                <td>メディアを表示します。</td>
-                            </tr>
-                            <tr>
-                                <td><strong>全拒否</strong></td>
-                                <td>すべて拒否（評価なし）</td>
-                                <td>アクセス制限をします。</td>
-                                <td>すべてのメディアを代替テキストに変更します。</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </li>
-            </ol>
-
-            <hr>
-
-            <h3>3. トラブルシューティング</h3>
-
-            <h4>Q. 設定を間違えてページが見られなくなりました。</h4>
-            <p>A. 管理画面（ダッシュボード）にはアクセス制御は適用されません。管理画面にログインし、グローバル設定を「制御設定しない」にします。個別設定は、該当する記事の編集画面で「全許可」または「グローバル設定に従う」に戻してください。</p>
-
-            <h4>Q. IPアドレスの自動更新が動きません。</h4>
-            <p>A. 「一般設定」タブで更新頻度が「停止」になっていないか確認してください。また、「診断ツール」タブで次回の実行予定時刻を確認できます。「今すぐIP更新を強制実行する」ボタンで手動更新も可能です。</p>
-
-            <h4>Q. 特定のボットだけブロックしたいのですが？</h4>
-            <p>A. 「User-Agent 定義1」にそのボットを追加し、記事の編集画面で「User-Agent の評価」を「ブラックリスト」にして、そのボットにチェックを入れてください。</p>
-
-            <h4>Q. 504などのサーバエラーが発生します。</h4>
-            <p>サーバの設定によってアプリが動作しない場合があります。WAF設定などを確認してください。また本プラグインはクーロンを使用します。許可されているか確認してください。</p>
-
-            <hr>
-
-            <h3>4. アプリ情報</h3>
-            <table class="widefat striped" style="max-width: 600px;">
-                <tbody>
-                    <tr>
-                        <td style="width: 30%;"><strong>プラグイン名</strong></td>
-                        <td>Smart Access Control</td>
-                    </tr>
-                    <tr>
-                        <td><strong>バージョン</strong></td>
-                        <td>3.0.1</td>
-                    </tr>
-                    <tr>
-                        <td><strong>作者</strong></td>
-                        <td>donnma (<a href="https://donnma.com/" target="_blank">donnma.com</a>)</td>
-                    </tr>
-                    <tr>
-                        <td><strong>GitHub</strong></td>
-                        <td><a href="https://github.com/donnma777/smart-access-control" target="_blank">donnma777/smart-access-control</a></td>
-                    </tr>
-                    <tr>
-                        <td><strong>リリース情報</strong></td>
-                        <td><a href="https://github.com/donnma777/smart-access-control/releases" target="_blank">Releases</a></td>
-                    </tr>
-                    <tr>
-                        <td><strong>X (Twitter)</strong></td>
-                        <td><a href="https://x.com/donnma777" target="_blank">@donnma777</a></td>
-                    </tr>
-                </tbody>
-            </table>
-
-        </div>
-        <?php
-    }
 
     /**
-     * 一般設定セクションの表示
+     * グローバル設定セクションの表示
      */
     public function render_general_settings_section() {
 
         // Removed $default_control_active
-        $ip_update_frequency = get_option('ggc_ip_update_frequency', 'daily');
-        $global_ua_control = get_option('ggc_global_user_agent_control', 'apply_new_posts');
-        $global_ip_evaluation = get_option('ggc_global_ip_evaluation', 'apply_new_posts');
+        $settings = $this->get_general_settings();
+        $ip_update_frequency = $settings['ip_update_frequency'];
+        $global_ua_control = $settings['global_ua_control'];
+        $global_ip_evaluation = $settings['global_ip_evaluation'];
+        $global_media_ua_control = $settings['global_media_ua_control'];
+        $global_media_ip_evaluation = $settings['global_media_ip_evaluation'];
+        $alt_fixed_featured = $settings['alt_fixed_featured'];
+        $alt_fixed = $settings['alt_fixed'];
+        $markdown_replace_enabled = $settings['markdown_replace_enabled'];
+        $markdown_global_template_mode = $settings['markdown_global_template_mode'];
+        $markdown_global_template_key = $settings['markdown_global_template_key'];
+        $global_ua_redirect_mode = $settings['global_ua_redirect_mode'];
+        $global_ip_redirect_mode = $settings['global_ip_redirect_mode'];
+        $global_ua_redirect_url = $settings['global_ua_redirect_url'];
+        $global_ip_redirect_url = $settings['global_ip_redirect_url'];
+        $global_ua_block_message_key = $settings['global_ua_block_message_key'];
+        $global_ip_block_message_key = $settings['global_ip_block_message_key'];
+        $global_ua_block_message = $settings['global_ua_block_message'];
+        $global_ip_block_message = $settings['global_ip_block_message'];
+        $markdown_templates = $settings['markdown_templates'];
+        $global_markdown_selected_crawlers = $settings['global_markdown_selected_crawlers'];
+        $global_markdown_selected_ips = $settings['global_markdown_selected_ips'];
+        $global_markdown_selected_ips_2 = $settings['global_markdown_selected_ips_2'];
+        $global_featured_display_mode = isset($settings['global_featured_display_mode']) ? $settings['global_featured_display_mode'] : 'normal';
         ?>
-        <div class="ggc-about" style="margin-bottom: 20px; padding: 12px 15px; background: #f6f7f7; border-left: 4px solid #2271b1;">
-        <p style="margin: 0 0 6px 0; font-weight: bold;">
-            🔒 クローラー個別制御（Custom Crawler Control）
-        </p>
-        <p style="margin: 0 0 8px 0;">
-            投稿・固定ページ単位で、検索エンジン・AIクローラー・不正ボットのアクセスを
-            <strong>User-Agent / IPアドレス </strong>で精密に制御できる
-            管理者向け WordPress プラグインです。アクセス制限を行ったり、画像などのメディアをテキストに置換可能です。(完全にアクセスを防ぐ保証はありません。ご了承ください。詳しくはアプリの使い方、GitHubリポジトリをご覧ください。)
-        </p>
-        <p style="margin: 0;">
-            🔗 GitHub : <a href="https://github.com/donnma777/smart-access-control" target="_blank" rel="noopener noreferrer">
-                 リポジトリを見る
-            </a>
-        </p>
-        <p style="margin: 0;">
-            🔗 作者 : <a href="https://donnma.com/" target="_blank" rel="noopener noreferrer">
-                donnma
-            </a>
+        <div class="ggc-about">
+        <p class="ggc-about-title">
+            グローバル設定では、すべての投稿・固定ページに適用されるデフォルトのアクセス制御設定を行います。ここで設定した内容は、各投稿・固定ページの個別設定よりも優先されます。
         </p>
         </div>
 
         <table class="form-table">
-            <tr>
-                <th scope="row">グローバル設定 User-Agent-ページ</th>
-                <td>
-                    <select name="ggc_global_user_agent_control" id="ggc_global_user_agent_control_select">
-                        <option value="none" <?php selected($global_ua_control, 'none'); ?>>アクセス制御設定を適用しない</option>
-                        <option value="apply_new_posts" <?php selected($global_ua_control, 'apply_new_posts'); ?>>アクセス制御設定を新規投稿で適用</option>
-                        <option value="global_blacklist" <?php selected($global_ua_control, 'global_blacklist'); ?>>全ページでブラックリスト設定</option>
-                        <option value="global_whitelist" <?php selected($global_ua_control, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
-                    </select>
-
-                    <div id="ggc-global-ua-list" style="display: <?php echo in_array($global_ua_control, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>;">
-                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
-                            <?php echo ($global_ua_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたUser-Agentをアクセス許可します。</strong>' : '<strong>ブラックリスト : チェックしたUser-Agentをアクセス拒否します。</strong>'; ?>
-                        </p>
-                        <p style="font-size:11px; margin-top:0; font-weight:bold;">User-Agent 制御リスト（全設定）:</p>
-                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
-                            <?php
-                            $bots = Custom_Crawler_Core::get_allowable_bots();
-                            $grouped = [];
-                            foreach ($bots as $key => $b) {
-                                $group_label = $b['group_label'] ?? 'その他';
-                                if (!isset($grouped[$group_label])) $grouped[$group_label] = [];
-                                $grouped[$group_label][$key] = $b;
-                            }
-
-                            $global_selected_crawlers = get_option('ggc_global_selected_crawlers', []);
-                            if (!is_array($global_selected_crawlers)) $global_selected_crawlers = [];
-
-                            foreach ($grouped as $glabel => $bots_in_group) : ?>
-                                <h4 style="margin: 8px 0 6px; font-size:13px;"><strong><?php echo esc_html($glabel); ?></strong></h4>
-                                <?php foreach ($bots_in_group as $bkey => $bot): ?>
-                                    <label style="display:block; margin-bottom:4px;">
-                                        <input type="checkbox" name="ggc_global_selected_crawlers[]" value="<?php echo esc_attr($bkey); ?>" <?php checked(in_array(sanitize_key($bkey), $global_selected_crawlers), true); ?>>
-                                        <?php echo esc_html($bot['label']); ?>
-                                    </label>
-                                <?php endforeach; ?>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">グローバル設定 IPアドレスの評価-ページ</th>
-                <td>
-                    <select name="ggc_global_ip_evaluation" id="ggc_global_ip_evaluation_select">
-                        <option value="none" <?php selected($global_ip_evaluation, 'none'); ?>>アクセス制御設定を適用しない</option>
-                        <option value="apply_new_posts" <?php selected($global_ip_evaluation, 'apply_new_posts'); ?>>アクセス制御設定を新規投稿で適用</option>
-                        <option value="global_blacklist" <?php selected($global_ip_evaluation, 'global_blacklist'); ?>>全ページでブラックリスト設定</option>
-                        <option value="global_whitelist" <?php selected($global_ip_evaluation, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
-                    </select>
-
-                    <div id="ggc-global-ip-list" style="display: <?php echo in_array($global_ip_evaluation, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>;">
-                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
-                            <?php echo ($global_ip_evaluation === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたIP範囲をアクセス許可します。</strong>' : '<strong>ブラックリスト : チェックしたIP範囲をアクセス拒否します。</strong>'; ?>
-                        </p>
-                        <p style="font-size:11px; margin-top:0; font-weight:bold;">IPアドレス制御リスト（全設定）:</p>
-                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
-                            <?php
-                            $ip_ranges_1 = get_option('ggc_ip_range_definitions', []);
-                            $ip_ranges_2 = get_option('ggc_ip_range_definitions_2', []);
-
-                            $grouped1 = [];
-                            foreach ($ip_ranges_1 as $k => $def) {
-                                $label = $def['group_label'] ?? 'その他';
-                                if (!isset($grouped1[$label])) $grouped1[$label] = [];
-                                $grouped1[$label][$k] = $def;
-                            }
-
-                            $grouped2 = [];
-                            foreach ($ip_ranges_2 as $k => $def) {
-                                $label = $def['group_label'] ?? 'その他';
-                                if (!isset($grouped2[$label])) $grouped2[$label] = [];
-                                $grouped2[$label][$k] = $def;
-                            }
-
-                            $global_selected_ips = get_option('ggc_global_selected_ips', []);
-                            if (!is_array($global_selected_ips)) $global_selected_ips = [];
-
-                            $global_selected_ips_2 = get_option('ggc_global_selected_ips_2', []);
-                            if (!is_array($global_selected_ips_2)) $global_selected_ips_2 = [];
-
-                            if (!empty($grouped1)) {
-                                echo '<h4 style="margin-top:0;">IPアドレス範囲1</h4>';
-                                foreach ($grouped1 as $glabel => $group) {
-                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
-                                    foreach ($group as $key => $ipd) {
-                                        echo '<label style="display:block; margin-bottom:4px;">';
-                                        echo '<input type="checkbox" name="ggc_global_selected_ips[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_selected_ips), true, false) . ' /> ';
-                                        echo esc_html($ipd['label']);
-                                        echo '</label>';
-                                    }
-                                }
-                            }
-
-                            if (!empty($grouped2)) {
-                                echo '<h4 style="margin-top:10px;">IPアドレス範囲2</h4>';
-                                foreach ($grouped2 as $glabel => $group) {
-                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
-                                    foreach ($group as $key => $ipd) {
-                                        echo '<label style="display:block; margin-bottom:4px;">';
-                                        echo '<input type="checkbox" name="ggc_global_selected_ips_2[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_selected_ips_2), true, false) . ' /> ';
-                                        echo esc_html($ipd['label']);
-                                        echo '</label>';
-                                    }
-                                }
-                            }
-
-                            ?>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-            <!-- Media-level global settings -->
-            <tr>
-                <th scope="row">グローバル設定 User-Agent-メディア</th>
-                <td>
-                    <?php $global_media_ua_control = get_option('ggc_global_media_user_agent_control', 'apply_new_posts'); ?>
-                    <select name="ggc_global_media_user_agent_control" id="ggc_global_media_user_agent_control_select">
-                        <option value="none" <?php selected($global_media_ua_control, 'none'); ?>>メディア制御設定を適用しない</option>
-                        <option value="apply_new_posts" <?php selected($global_media_ua_control, 'apply_new_posts'); ?>>メディア制御設定を新規投稿で適用</option>
-                        <option value="global_blacklist" <?php selected($global_media_ua_control, 'global_blacklist'); ?>>全ページでブラックリスト</option>
-                        <option value="global_whitelist" <?php selected($global_media_ua_control, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
-                    </select>
-                    <div id="ggc-global-media-ua-list" style="display: <?php echo in_array($global_media_ua_control, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>; margin-top:8px;">
-                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
-                            <?php echo ($global_media_ua_control === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたUser-Agentはメディア表示、それ以外は代替テキスト表示します。</strong>' : '<strong>ブラックリスト : チェックしたUser-Agentは代替テキスト表示、それ以外はメディア表示します。</strong>'; ?>
-                        </p>
-                        <p style="font-size:11px; margin-top:0; font-weight:bold;">User-Agent 制御リスト（メディア向け）:</p>
-                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
-                            <?php
-                            $bots = Custom_Crawler_Core::get_allowable_bots();
-                            $grouped = [];
-                            foreach ($bots as $key => $b) {
-                                $group_label = $b['group_label'] ?? 'その他';
-                                if (!isset($grouped[$group_label])) $grouped[$group_label] = [];
-                                $grouped[$group_label][$key] = $b;
-                            }
-
-                            $global_media_selected_crawlers = get_option('ggc_global_media_selected_crawlers', []);
-                            if (!is_array($global_media_selected_crawlers)) $global_media_selected_crawlers = [];
-
-                            foreach ($grouped as $glabel => $bots_in_group) : ?>
-                                <h4 style="margin: 8px 0 6px; font-size:13px;"><strong><?php echo esc_html($glabel); ?></strong></h4>
-                                <?php foreach ($bots_in_group as $bkey => $bot): ?>
-                                    <label style="display:block; margin-bottom:4px;">
-                                        <input type="checkbox" name="ggc_global_media_selected_crawlers[]" value="<?php echo esc_attr($bkey); ?>" <?php checked(in_array(sanitize_key($bkey), $global_media_selected_crawlers), true); ?>>
-                                        <?php echo esc_html($bot['label']); ?>
-                                    </label>
-                                <?php endforeach; ?>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">グローバル設定 IPアドレスの評価-メディア</th>
-                <td>
-                    <?php $global_media_ip_evaluation = get_option('ggc_global_media_ip_evaluation', 'apply_new_posts'); ?>
-                    <select name="ggc_global_media_ip_evaluation" id="ggc_global_media_ip_evaluation_select">
-                        <option value="none" <?php selected($global_media_ip_evaluation, 'none'); ?>>メディア制御設定を適用しない</option>
-                        <option value="apply_new_posts" <?php selected($global_media_ip_evaluation, 'apply_new_posts'); ?>>メディア制御設定を新規投稿で適用</option>
-                        <option value="global_blacklist" <?php selected($global_media_ip_evaluation, 'global_blacklist'); ?>>全ページでブラックリスト</option>
-                        <option value="global_whitelist" <?php selected($global_media_ip_evaluation, 'global_whitelist'); ?>>全ページでホワイトリスト設定</option>
-                    </select>
-                    <div id="ggc-global-media-ip-list" style="display: <?php echo in_array($global_media_ip_evaluation, ['global_blacklist','global_whitelist']) ? 'block' : 'none'; ?>; margin-top:8px;">
-                        <p style="font-size:11px; margin-top:8px; margin-bottom:6px;">
-                            <?php echo ($global_media_ip_evaluation === 'global_whitelist') ? '<strong>ホワイトリスト : チェックしたIP範囲はメディア表示、それ以外は代替テキスト表示します。</strong>' : '<strong>ブラックリスト : チェックしたIP範囲は代替テキスト表示、それ以外はメディア表示します。</strong>'; ?>
-                        </p>
-                        <p style="font-size:11px; margin-top:0; font-weight:bold;">IPアドレス制御リスト（メディア向け）:</p>
-                        <div style="max-height:240px; overflow-y:auto; border:1px solid #ddd; padding:8px;">
-                            <?php
-                            $ip_ranges_1 = get_option('ggc_ip_range_definitions', []);
-                            $ip_ranges_2 = get_option('ggc_ip_range_definitions_2', []);
-
-                            $grouped1 = [];
-                            foreach ($ip_ranges_1 as $k => $def) {
-                                $label = $def['group_label'] ?? 'その他';
-                                if (!isset($grouped1[$label])) $grouped1[$label] = [];
-                                $grouped1[$label][$k] = $def;
-                            }
-
-                            $grouped2 = [];
-                            foreach ($ip_ranges_2 as $k => $def) {
-                                $label = $def['group_label'] ?? 'その他';
-                                if (!isset($grouped2[$label])) $grouped2[$label] = [];
-                                $grouped2[$label][$k] = $def;
-                            }
-
-                            $global_media_selected_ips = get_option('ggc_global_media_selected_ips', []);
-                            if (!is_array($global_media_selected_ips)) $global_media_selected_ips = [];
-
-                            $global_media_selected_ips_2 = get_option('ggc_global_media_selected_ips_2', []);
-                            if (!is_array($global_media_selected_ips_2)) $global_media_selected_ips_2 = [];
-
-                            if (!empty($grouped1)) {
-                                echo '<h4 style="margin-top:0;">IPアドレス範囲1</h4>';
-                                foreach ($grouped1 as $glabel => $group) {
-                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
-                                    foreach ($group as $key => $ipd) {
-                                        echo '<label style="display:block; margin-bottom:4px;">';
-                                        echo '<input type="checkbox" name="ggc_global_media_selected_ips[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_media_selected_ips), true, false) . ' /> ';
-                                        echo esc_html($ipd['label']);
-                                        echo '</label>';
-                                    }
-                                }
-                            }
-
-                            if (!empty($grouped2)) {
-                                echo '<h4 style="margin-top:10px;">IPアドレス範囲2</h4>';
-                                foreach ($grouped2 as $glabel => $group) {
-                                    echo '<strong>' . esc_html($glabel) . '</strong><br/>';
-                                    foreach ($group as $key => $ipd) {
-                                        echo '<label style="display:block; margin-bottom:4px;">';
-                                        echo '<input type="checkbox" name="ggc_global_media_selected_ips_2[]" value="' . esc_attr($key) . '" ' . checked(in_array(sanitize_key($key), $global_media_selected_ips_2), true, false) . ' /> ';
-                                        echo esc_html($ipd['label']);
-                                        echo '</label>';
-                                    }
-                                }
-                            }
-
-                            ?>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-                        <tr>
-                <th scope="row">アイキャッチ画像の代替テキスト（ブラックリスト/ホワイトリスト使用時）</th>
-                <td>
-                    <?php 
-                    $alt_fixed_featured = get_option('ggc_alt_fixed_text_featured', ''); 
-                    ?>
-                    <input type="text" id="ggc_alt_fixed_text_featured" name="ggc_alt_fixed_text_featured" value="<?php echo esc_attr($alt_fixed_featured); ?>" class="regular-text" placeholder="アイキャッチ画像の代替テキスト（使用時）">
-                    <p class="description">アイキャッチ画像が表示除外された場合に代替テキストとして使用するテキストを指定します。未入力の場合は通常の代替テキストを使用します。</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">代替テキスト（ブラックリスト/ホワイトリスト使用時）</th>
-                <td>
-                    <?php 
-                    $alt_fixed = get_option('ggc_alt_fixed_text', ''); 
-                    ?>
-                    <input type="text" id="ggc_alt_fixed_text" name="ggc_alt_fixed_text" value="<?php echo esc_attr($alt_fixed); ?>" class="regular-text" placeholder="代替テキスト（使用時）">
-                    <p class="description">メディアを代替テキストとして使用するテキストにする場合に指定します。メディア制御でブラックリスト/ホワイトリストを選択した場合に有効になります。</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">
-                    <label for="ggc_ip_update_frequency">IPアドレスの自動更新頻度</label>
-                </th>
-                <td>
-                    <select name="ggc_ip_update_frequency" id="ggc_ip_update_frequency">
-                        <option value="disabled" <?php selected($ip_update_frequency, 'disabled'); ?>>停止</option>
-                        <option value="hourly" <?php selected($ip_update_frequency, 'hourly'); ?>>毎時</option>
-                        <option value="twicedaily" <?php selected($ip_update_frequency, 'twicedaily'); ?>>半日</option>
-                        <option value="daily" <?php selected($ip_update_frequency, 'daily'); ?>>毎日</option>
-                        <option value="weekly" <?php selected($ip_update_frequency, 'weekly'); ?>>毎週</option>
-                        <option value="monthly" <?php selected($ip_update_frequency, 'monthly'); ?>>毎月</option>
-                        <option value="biannually" <?php selected($ip_update_frequency, 'biannually'); ?>>半年</option>
-                        <option value="annually" <?php selected($ip_update_frequency, 'annually'); ?>>毎年</option>
-                    </select>
-                    <p class="description">GooglebotやGPTBotのIPアドレスリストを更新する頻度を設定します。</p>
-                    <?php
-                    $last = get_option('ggc_last_ip_update_result');
-                    if ($last && is_array($last)) {
-                        $time = $last['time'] ?? get_option('ggc_last_ip_update_time');
-                        $g = isset($last['google_count']) ? number_format(intval($last['google_count'])) . ' 件' : 'なし';
-                        $o = isset($last['openai_count']) ? number_format(intval($last['openai_count'])) . ' 件' : 'なし';
-                        echo '<p class="description">直近の手動/自動更新: Google: ' . esc_html($g) . ' / GPTBot: ' . esc_html($o) . ' （最終: ' . ($time ? human_time_diff($time) . '前' : '未実行') . '）</p>';
-                    }
-                    ?>
-                </td>
-            </tr>
+            <?php
+            $this->render_markdown_global_settings(
+                $markdown_replace_enabled,
+                $markdown_global_template_mode,
+                $markdown_global_template_key,
+                $markdown_templates,
+                $global_markdown_selected_crawlers,
+                $global_markdown_selected_ips,
+                $global_markdown_selected_ips_2
+            );
+            ?>
+            <?php
+            $this->render_media_global_settings(
+                $global_media_ua_control,
+                $global_media_ip_evaluation,
+                $alt_fixed_featured,
+                $alt_fixed
+            );
+            // no parameters are needed – the helper reads its own values
+            // from options.  passing the globals was a leftover from an earlier
+            // refactor and produced needless warning messages.
+            $this->render_page_global_settings();
+            ?>
         </table>
         <hr>
-        <table class="form-table">
-            <tr>
-                <th scope="row">
-                    おすすめ設定のインポート
-                </th>
-                <td>
-                    <?php $import_url = wp_nonce_url( admin_url('admin.php?action=ggc_import_default_settings'), 'ggc_import_defaults_nonce' ); ?>
-                    <a href="<?php echo esc_url($import_url); ?>" class="button button-secondary">おすすめ設定をインポートする</a>
-                    <p class="description">User-Agent, IPアドレス範囲, 不正UAパターンの推奨初期設定をインポートします。既存のカスタム設定は上書きされません。</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">
-                    全データのクリア
-                </th>
-                <td>
-                    <?php $clear_url = wp_nonce_url( admin_url('admin-post.php?action=ggc_clear_all_data'), 'ggc_clear_all_data_nonce' ); ?>
-                    <a href="<?php echo esc_url($clear_url); ?>" class="button button-secondary" onclick="return confirm('設定オプション・投稿/メディアのメタデータ・IP更新履歴をすべて削除します。よろしいですか？');">すべての保存データをクリアする</a>
-                    <p class="description">設定画面の保存済みオプション、投稿/メディアに保存されたメタデータなどのすべてを削除します。プラグインのバージョンアップをして動作が不安定な場合などにご利用ください。</p>
-                </td>
-            </tr>
-        </table>
+        <?php $this->render_ip_update_settings($ip_update_frequency); ?>
+        <?php
+    }
+
+    /**
+     * マークダウンテンプレート（グローバル）セクション
+     */
+    public function render_markdown_templates_section() {
+        $templates = GGC_Options::get_markdown_templates();
+        ?>
+        <p class="ggc-md-template-desc">
+            テンプレートキーを選択して読み込み、編集・保存できます。ランダム表示はテンプレートごとにON/OFFできます。
+        </p>
+        <p class="description">
+            - テンプレート選択 : 編集したいテンプレートを選択してください。<br>
+            - テンプレートキー : テンプレートの一意の識別子です。<br>
+            - ページタイトル : ページのタイトルを設定します。<br>
+            - マークダウン本文 : マークダウン形式で本文を入力します。<br>
+            - ランダム表示に含める : ランダム表示に含めるかどうかを設定します。<br>
+            - アイキャッチ（画像選択 or URL） : アイキャッチ画像を設定します。画像URLを直接入力するか、画像選択ボタンからメディアライブラリの画像を選択できます。
+        </p>
+        <div class="ggc-md-template-controls">
+            <label class="ggc-label-inline">テンプレート選択</label>
+            <select id="ggc-md-template-select" class="ggc-md-template-select">
+                <option value="">選択してください...</option>
+                <?php foreach ($templates as $key => $tpl) :
+                    $label = $tpl['title'] ?? $key; ?>
+                    <option value="<?php echo esc_attr($key); ?>"><?php echo esc_html($label . ' (' . $key . ')'); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <!-- 呼び出しボタンは自動読み込みに変更したため不要 -->
+            <button type="button" class="button ggc-button-spacer" id="ggc-md-template-new">新規</button>
+        </div>
+
+        <div id="ggc-md-template-editor" class="ggc-md-template-editor">
+            <p class="ggc-md-template-row">
+                <label class="ggc-label-strong">テンプレートキー</label><br>
+                <input type="text" id="ggc-md-template-key" class="ggc-md-template-field" placeholder="例: default" />
+            </p>
+            <p class="ggc-md-template-row">
+                <label class="ggc-label-strong">ページタイトル</label><br>
+                <input type="text" id="ggc-md-template-title" class="ggc-md-template-field" />
+            </p>
+            <p class="ggc-md-template-row">
+                <label class="ggc-label-strong">マークダウン本文</label><br>
+                <textarea id="ggc-md-template-markdown" rows="8" class="ggc-md-template-field"></textarea>
+            </p>
+            <p class="ggc-md-template-row">
+                <label>
+                    <input type="checkbox" id="ggc-md-template-random" />
+                    ランダム表示に含める
+                </label>
+            </p>
+            <div class="ggc-md-template-row">
+                <label class="ggc-label-strong">アイキャッチ（画像選択 or URL）</label><br>
+                <input type="hidden" id="ggc-md-template-image-id" value="" />
+                <input type="text" id="ggc-md-template-image-url" class="ggc-md-template-field" placeholder="https://..." />
+                <div id="ggc-md-template-image-preview" class="ggc-md-template-image-preview">
+                    <span class="ggc-muted-text">未設定</span>
+                </div>
+                <button type="button" class="button" id="ggc-md-template-image-select">画像を選択</button>
+                <button type="button" class="button ggc-button-spacer" id="ggc-md-template-image-remove">削除</button>
+            </div>
+            <p class="ggc-md-template-row ggc-md-template-row--none">
+                <button type="button" class="button button-primary" id="ggc-md-template-save">このテンプレートを保存</button>
+                <button type="button" class="button ggc-button-spacer" id="ggc-md-template-delete">このテンプレートを削除</button>
+            </p>
         </div>
         <?php
     }
 
     /**
-     * User-Agent 定義リストセクションの表示
+     * ページ評価メッセージ定義セクション
      */
-    public function render_crawler_definitions_section() {
-        $bots = Custom_Crawler_Core::get_allowable_bots();
-        $default_bots = ggc_get_default_bots();
+    public function render_page_eval_messages_section() {
+        $messages = GGC_Options::get_page_eval_messages();
+        $cleared = GGC_Options::is_clear_all_done();
+        ?>
+        <p class="description">
+            ページ評価で「アクセスをブロックする」場合に使用するメッセージ定義です。<br>
+            投稿画面・グローバル設定で、ここで登録したラベルを選択できます。
+        </p>
+        <p class="description">
+            - 定義キー : システム内部で使用される一意の識別子です。必須項目です。英数字のみ登録可能です。<br>
+            - 表示ラベル : 投稿編集画面で表示される名前です。わかりやすい名前を設定してください。<br>
+            - グローバル : このチェックを設定すると、チェックしたメッセージが選択可能になります。<br>
+            - ステータスコード : ブロック時のステータスコードを設定します。<br>
+            - メッセージ内容 : ブロック時に表示するメッセージを設定します。<br>
+        </p>
+        <table class="wp-list-table widefat fixed striped" id="ggc-page-eval-table">
+            <thead>
+                <tr>
+                    <th style="width: 14%;">定義キー</th>
+                    <th style="width: 16%;">表示ラベル</th>
+                    <th style="width: 8%;">グローバル</th>
+                    <th style="width: 10%;">ステータスコード</th>
+                    <th>メッセージ内容</th>
+                    <th style="width: 8%;">操作</th>
+                </tr>
+            </thead>
+            <tbody id="ggc-page-eval-tbody">
+                <?php foreach ($messages as $key => $def): ?>
+                    <tr>
+                        <td>
+                            <input type="text" name="ggc_page_eval_messages[<?php echo esc_attr($key); ?>][key]" value="<?php echo esc_attr($key); ?>" class="regular-text" />
+                        </td>
+                        <td>
+                            <input type="text" name="ggc_page_eval_messages[<?php echo esc_attr($key); ?>][label]" value="<?php echo esc_attr($def['label'] ?? $key); ?>" class="regular-text" />
+                        </td>
+                        <td style="text-align:center;">
+                            <input type="checkbox" name="ggc_page_eval_messages[<?php echo esc_attr($key); ?>][is_global]" value="1" <?php checked(!empty($def['is_global']), true); ?> />
+                        </td>
+                        <td>
+                            <input type="number" min="400" max="599" name="ggc_page_eval_messages[<?php echo esc_attr($key); ?>][status_code]" value="<?php echo esc_attr(intval($def['status_code'] ?? 403)); ?>" class="small-text" />
+                        </td>
+                        <td>
+                            <textarea name="ggc_page_eval_messages[<?php echo esc_attr($key); ?>][message]" rows="2" class="large-text"><?php echo esc_textarea($def['message'] ?? ''); ?></textarea>
+                        </td>
+                        <td>
+                            <button type="button" class="button ggc-remove-page-eval">削除</button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <p>
+              <button type="button" class="button button-primary" id="ggc-add-page-eval">定義を追加</button>
+        </p>
+
+        <script type="text/html" id="ggc-page-eval-row-template">
+            <tr>
+                <td>
+                    <input type="text" name="ggc_page_eval_messages[__KEY__][key]" value="__KEY__" class="regular-text" />
+                </td>
+                <td>
+                    <input type="text" name="ggc_page_eval_messages[__KEY__][label]" value="" class="regular-text" />
+                </td>
+                <td style="text-align:center;">
+                    <input type="checkbox" name="ggc_page_eval_messages[__KEY__][is_global]" value="1" />
+                </td>
+                <td>
+                    <input type="number" min="400" max="599" name="ggc_page_eval_messages[__KEY__][status_code]" value="403" class="small-text" />
+                </td>
+                <td>
+                    <textarea name="ggc_page_eval_messages[__KEY__][message]" rows="2" class="large-text"></textarea>
+                </td>
+                <td>
+                    <button type="button" class="button ggc-remove-page-eval">削除</button>
+                </td>
+            </tr>
+        </script>
+        <?php
+    }
+
+    
+
+    private function render_crawler_definitions_intro() {
         ?>
         <p class="description">
             投稿ごとの制御機能で使用するUser-Agentのリストです。カスタムのボットを追加・編集できます。
         </p>
         <p class="description">
-            - 定義キー : システム内部で使用される一意の識別子です。ここにテキストを入力すると、メディアが評価条件に従い代替テキストに置き換わります。空欄の場合はメディアが表示されます。英数字のみ登録可能です。
-            - グループラベル : ボットのグループ名を設定します。同じグループ名を設定すると、投稿編集画面でまとめて表示されます。
+            - 定義キー : システム内部で使用される一意の識別子です。ここにテキストを入力すると、メディアが評価条件に従い代替テキストに置き換わります。空欄の場合はメディアが表示されます。英数字のみ登録可能です。<br>
+            - グループラベル : ボットのグループ名を設定します。同じグループ名を設定すると、投稿編集画面でまとめて表示されます。<br>
             - 表示ラベル : 投稿編集画面で表示される名前です。わかりやすい名前を設定してください。<br>
             - 説明文       : 投稿編集画面で表示される説明文です。必要に応じて設定してください。<br>
             - User-Agent 文字列  : UA文字列が一つでも含まれていれば一致と見なされます。複数のUAをカンマ区切りで入力してください。</p>
-        <table class="wp-list-table widefat fixed striped" id="ggc-bots-table">
-            <thead>
-                <tr>
-                    <th style="width: 20%;">定義キー (システム用) / グループ</th>
-                    <th style="width: 25%;">表示ラベル / 説明文</th>
-                    <th style="width: 45%;">User-Agent 文字列</th>
-                    <th style="width: 10%;">操作</th>
-                </tr>
-            </thead>
-            <tbody id="ggc-bots-tbody">
-                <?php foreach ($bots as $key => $bot) :
-                    $is_default = isset($default_bots[$key]);
-                    $uas_str = implode(', ', $bot['uas'] ?? []);
-                    // $readonly_attr = $is_default ? 'readonly' : ''; // Allow editing default keys
-                ?>
-                <tr data-key="<?php echo esc_attr($key); ?>">
-                    <td>
-                        <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                        <input type="text"
-                               name="ggc_crawler_definitions[<?php echo esc_attr($key); ?>][key]"
-                               value="<?php echo esc_attr($key); ?>"
-                               class="regular-text ggc-bot-key"
-                               style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                        <input type="text" name="ggc_crawler_definitions[<?php echo esc_attr($key); ?>][group_label]" value="<?php echo esc_attr($bot['group_label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                    </td>
-                    <td>
-                        <p><strong>表示ラベル:</strong></p>
-                        <input type="text" name="ggc_crawler_definitions[<?php echo esc_attr($key); ?>][label]" value="<?php echo esc_attr($bot['label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                        <input type="text" name="ggc_crawler_definitions[<?php echo esc_attr($key); ?>][description]" value="<?php echo esc_attr($bot['description'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                    </td>
-                    <td>
-                        <textarea name="ggc_crawler_definitions[<?php echo esc_attr($key); ?>][uas]" rows="4" cols="50" class="large-text code" style="width: 100%;"><?php echo esc_textarea($uas_str); ?></textarea>
-                    </td>
-                    <td>
-                        <button type="button" class="button button-secondary ggc-remove-row ggc-remove-bot">削除</button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <p><button type="button" class="button button-primary" id="ggc-add-bot">新しいボット定義を追加</button></p>
+        <?php
+    }
 
+    private function render_crawler_definitions_table($bots, $default_bots) {
+        $this->render_ua_definitions_table_common($bots, $default_bots, 'bot');
+    }
+
+    private function render_crawler_definitions_template() {
+        ?>
         <script type="text/template" id="ggc-bot-row-template">
             <tr class="ggc-bot-row new-row" data-key="__KEY__">
                 <td>
-                    <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                    <input type="text" name="ggc_crawler_definitions[__KEY__][key]" value="__KEY__" class="regular-text ggc-bot-key" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                    <input type="text" name="ggc_crawler_definitions[__KEY__][group_label]" value="カスタム" class="regular-text" style="width: 100%;" />
+                    <p class="ggc-field-label"><strong>定義キー:</strong></p>
+                    <input type="text" name="ggc_crawler_definitions[__KEY__][key]" value="__KEY__" class="regular-text ggc-bot-key ggc-field-full" />
+                    <p class="ggc-field-label"><strong>グループラベル:</strong></p>
+                    <input type="text" name="ggc_crawler_definitions[__KEY__][group_label]" value="カスタム" class="regular-text ggc-field-full" />
                 </td>
                 <td>
                     <p><strong>表示ラベル:</strong></p>
-                    <input type="text" name="ggc_crawler_definitions[__KEY__][label]" value="カスタムボット" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                    <input type="text" name="ggc_crawler_definitions[__KEY__][description]" value="" class="regular-text" style="width: 100%;" />
+                    <input type="text" name="ggc_crawler_definitions[__KEY__][label]" value="カスタムボット" class="regular-text ggc-field-full" />
+                    <p class="ggc-field-label"><strong>説明文:</strong></p>
+                    <input type="text" name="ggc_crawler_definitions[__KEY__][description]" value="" class="regular-text ggc-field-full" />
                 </td>
                 <td>
-                    <textarea name="ggc_crawler_definitions[__KEY__][uas]" rows="4" cols="50" class="large-text code" style="width: 100%;"></textarea>
+                    <textarea name="ggc_crawler_definitions[__KEY__][uas]" rows="4" cols="50" class="large-text code ggc-field-full"></textarea>
                     <p class="description">UA文字列が一つでも含まれていれば一致と見なされます。複数のUAをカンマ区切りで入力してください。</p>
                 </td>
                 <td>
@@ -1092,206 +1498,59 @@ class Custom_Admin_Settings {
         <?php
     }
 
-    /**
-     * IPアドレス範囲 定義リストセクションの表示 (URL入力欄追加版)
-     */
-    public function render_ip_range_definitions_section() {
-        $ip_ranges = get_option('ggc_ip_range_definitions', []);
-        $default_ip_ranges = ggc_get_default_ip_ranges();
-        ?>
-        <p class="description">
-            投稿ごとの制御機能で使用するIPアドレス範囲のリストです。カスタムのIP範囲を追加・編集できます。
-        </p>
-        <p class="description">
-            - 定義キー : システム用、一意のキー。必須項目。英数字のみ登録可能。<br/>
-            - グローバルラベル : 管理画面でのグループ分けに使用されます。<br/>
-            - プレースホルダを許可 : （形式チェックに失敗してもこの値を保持します）<br/>
-            - 自動更新 : チェックすると保存時にURLから自動取得されます<br/>
-            - 説明文 : 管理画面での説明文。<br/>
-            - 表示ラベル : 管理画面での表示ラベル。<br/>
-            - 取得元URL (自動更新用) : IPアドレス範囲を定期的に自動取得するためのURLを指定します。<br/>
-            IPアドレス範囲 (CIDR形式) : 1行にIPv4またはIPv6の範囲を1つのCIDR形式で入力してください。例: <code>192.168.0.0/16</code><br/>
-        </p>
-        <p>
-            <?php
-            // Nonce provided for AJAX run
-            ?>
-            <?php $manual_url = wp_nonce_url( admin_url('admin-post.php?action=run_ggc_ip_update'), 'ggc_manual_ip_update_nonce' ); ?>
-            <button type="button" id="ggc-run-ip-update" class="button button-secondary ggc-run-ip-update-btn" data-nonce="<?php echo esc_attr(wp_create_nonce('ggc_run_update_nonce')); ?>" data-ajax-url="<?php echo esc_attr(admin_url('admin-ajax.php')); ?>" data-manual-url="<?php echo esc_url($manual_url); ?>">今すぐ IP 更新を強制実行する</button>
-            <span class="description" style="margin-left:10px;">(最終更新: <?php echo get_option('ggc_last_ip_update_time') ? human_time_diff(get_option('ggc_last_ip_update_time')) . '前' : '未実行'; ?>)</span>
-            <noscript><a href="<?php echo esc_url($manual_url); ?>" class="button" style="margin-left:10px;">JavaScript無効時に更新を実行</a></noscript>
-        </p>
-        <table class="wp-list-table widefat fixed striped" id="ggc-ip-ranges-table">
-            <thead>
-                <tr>
-                    <th style="width: 25%;">定義キー / グループ</th>
-                    <th style="width: 30%;">表示ラベル / 説明文 / 取得元URL</th>
-                    <th style="width: 35%;">IPアドレス範囲 (CIDR形式)</th>
-                    <th style="width: 10%;">操作</th>
-                </tr>
-            </thead>
-            <tbody id="ggc-ip-ranges-tbody">
-                <?php foreach ($ip_ranges as $key => $ip_def) :
-                    $is_default = isset($default_ip_ranges[$key]);
-                    $ranges_str = implode("\n", $ip_def['ranges'] ?? []);
-                    // $readonly_attr = $is_default ? 'readonly' : ''; // Allow editing default keys
-                    $source_url = $ip_def['source_url'] ?? ''; // URLを取得
-                ?>
-                <tr data-key="<?php echo esc_attr($key); ?>">
-                    <td>
-                        <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                        <input type="text"
-                               name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][key]"
-                               value="<?php echo esc_attr($key); ?>"
-                               class="regular-text ggc-ip-key"
-                               style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][group_label]" value="<?php echo esc_attr($ip_def['group_label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                            <p style="margin-top: 10px;"><label><input type="checkbox" name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][allow_placeholder]" value="1" <?php checked(!empty($ip_def['allow_placeholder']), true); ?> /> <strong>プレースホルダを許可</strong></label></p>
-                        <p style="margin-top:6px;"><label><input type="checkbox" name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][is_auto]" value="1" <?php checked(!empty($ip_def['is_auto']), true); ?> /> 自動更新 </label></p>
-
-
-                    </td>
-                    <td>
-                        <p><strong>表示ラベル:</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][label]" value="<?php echo esc_attr($ip_def['label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][description]" value="<?php echo esc_attr($ip_def['description'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                        <p style="margin-top: 6px;"><strong>取得元URL (自動更新用):</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][source_url]" value="<?php echo esc_url($source_url); ?>" class="regular-text" placeholder="https://..." style="width: 100%; font-size: 11px; color: #666;" />
-                    </td>
-                    <td>
-                        <textarea name="ggc_ip_range_definitions[<?php echo esc_attr($key); ?>][ranges]" rows="6" cols="50" class="large-text code" style="width: 100%;" <?php disabled($ip_def['is_auto'] ?? false, true); ?>><?php echo esc_textarea($ranges_str); ?></textarea>
-                        <p class="description">IPv4またはIPv6のCIDR形式。</p>
-                            <div class="ggc-parse-status" style="margin-top:6px;">
-                            <?php if (!empty($ip_def['last_parse_error'])): ?>
-                                <p style="color:#d9534f;margin:0;"><strong>解析エラー:</strong> <?php echo esc_html($ip_def['last_parse_error']); ?> (<?php echo wp_date(get_option('date_format') . ' ' . get_option('time_format'), intval($ip_def['last_parse_time'] ?? 0)); ?>)</p>
-                            <?php elseif (!empty($ip_def['last_parse_time'])): ?>
-                                <p style="color:#28a745;margin:0;"><strong>最終解析成功:</strong> <?php echo wp_date(get_option('date_format') . ' ' . get_option('time_format'), intval($ip_def['last_parse_time'] ?? 0)); ?>
-                                <?php if (isset($ip_def['last_parse_count'])): ?>
-                                    (<?php echo esc_html(number_format($ip_def['last_parse_count'])); ?> 件)
-                                <?php endif; ?>
-                                </p>
-                            <?php endif; ?>
-                        </div>
-                        <?php if (!empty($ip_def['is_auto'])): ?>
-                            <p style="color: green; margin-top: 5px;">✅ 自動更新対象 (テキスト入力は無視されます)</p>
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <button type="button" class="button button-secondary ggc-remove-row ggc-remove-ip">削除</button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <p><button type="button" class="button button-primary" id="ggc-add-ip">新しいIP範囲定義を追加</button></p>
-
-        <script type="text/template" id="ggc-ip-row-template">
-            <tr class="ggc-ip-row new-row" data-key="__KEY__">
-                <td>
-                    <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions[__KEY__][key]" value="__KEY__" class="regular-text ggc-ip-key" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions[__KEY__][group_label]" value="カスタム" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top: 10px;"><label><input type="checkbox" name="ggc_ip_range_definitions[__KEY__][allow_placeholder]" value="1" checked="checked" /> <strong>プレースホルダを許可</strong></label></p>
-                    <p style="margin-top:6px;"><label><input type="checkbox" name="ggc_ip_range_definitions[__KEY__][is_auto]" value="1" checked="checked" /> 自動更新 (チェックすると保存時にURLから自動取得されます)</label></p>
-                </td>
-                <td>
-                    <p><strong>表示ラベル:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions[__KEY__][label]" value="カスタムIP範囲" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions[__KEY__][description]" value="" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top:6px;"><strong>取得元URL (自動更新用):</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions[__KEY__][source_url]" value="" class="regular-text" placeholder="https://..." style="width: 100%; font-size: 11px; color: #666;" />
-                </td>
-                <td>
-                    <textarea name="ggc_ip_range_definitions[__KEY__][ranges]" rows="4" cols="50" class="large-text code" style="width: 100%;"></textarea>
-                    <p class="description">IPv4またはIPv6のCIDR形式。</p>
-                </td>
-                <td>
-                    <button type="button" class="button button-secondary ggc-remove-row ggc-remove-ip">削除</button>
-                </td>
-            </tr>
-        </script>
-        <?php
+    private function render_ip_range_definitions_intro() {
+        Admin_IP_Ranges::render_intro();
     }
-    /**
-     * 不正UAパターン 定義リストセクションの表示
-     */
-    public function render_browser_block_patterns_section() {
-        $patterns = Custom_Crawler_Core::get_browser_block_patterns();
-        $default_patterns = ggc_get_default_browser_patterns();
+
+    private function render_ip_range_definitions_update_controls($button_id) {
+        Admin_IP_Ranges::render_update_controls($button_id);
+    }
+
+    private function render_ip_range_definitions_table($ip_ranges, $default_ip_ranges, $field_prefix, $table_id, $tbody_id) {
+        Admin_IP_Ranges::render_table($ip_ranges, $default_ip_ranges, $field_prefix, $table_id, $tbody_id);
+    }
+
+    private function render_ip_range_definitions_template($field_prefix, $template_id, $add_button_id) {
+        Admin_IP_Ranges::render_template($field_prefix, $template_id, $add_button_id);
+    }
+
+    private function render_browser_block_patterns_intro() {
         ?>
         <p class="description">
             投稿ごとの制御機能で使用するUser-Agentのリストです。カスタムのボットを追加・編集できます。
         </p>
         <p class="description">
-            - 定義キー : システム内部で使用される一意の識別子です。必須項目です。英数字のみ登録可能です。
-            - グループラベル : ボットのグループ名を設定します。同じグループ名を設定すると、投稿編集画面でまとめて表示されます。
+            - 定義キー : システム内部で使用される一意の識別子です。必須項目です。英数字のみ登録可能です。<br>
+            - グループラベル : ボットのグループ名を設定します。同じグループ名を設定すると、投稿編集画面でまとめて表示されます。<br>
             - 表示ラベル : 投稿編集画面で表示される名前です。わかりやすい名前を設定してください。<br>
             - 説明文       : 投稿編集画面で表示される説明文です。必要に応じて設定してください。<br>
             - User-Agent 文字列  : UA文字列が一つでも含まれていれば一致と見なされます。複数のUAをカンマ区切りで入力してください。
         </p>
-        </p>
-        <table class="wp-list-table widefat fixed striped" id="ggc-patterns-table">
-            <thead>
-                <tr>
-                    <th style="width: 20%;">定義キー (システム用) / グループ</th>
-                    <th style="width: 25%;">表示ラベル / 説明文</th>
-                    <th style="width: 45%;">User-Agent パターン文字列</th>
-                    <th style="width: 10%;">操作</th>
-                </tr>
-            </thead>
-            <tbody id="ggc-patterns-tbody">
-                <?php foreach ($patterns as $key => $pattern_def) :
-                    $is_default = $pattern_def['is_default'] ?? isset($default_patterns[$key]);
-                ?>
-                <tr data-key="<?php echo esc_attr($key); ?>">
-                    <td>
-                        <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                        <input type="text"
-                               name="ggc_browser_block_patterns[<?php echo esc_attr($key); ?>][key]"
-                               value="<?php echo esc_attr($key); ?>"
-                               class="regular-text ggc-pattern-key"
-                               style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                        <input type="text" name="ggc_browser_block_patterns[<?php echo esc_attr($key); ?>][group_label]" value="<?php echo esc_attr($pattern_def['group_label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                    </td>
-                    <td>
-                        <p><strong>表示ラベル:</strong></p>
-                        <input type="text" name="ggc_browser_block_patterns[<?php echo esc_attr($key); ?>][label]" value="<?php echo esc_attr($pattern_def['label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                        <input type="text" name="ggc_browser_block_patterns[<?php echo esc_attr($key); ?>][description]" value="<?php echo esc_attr($pattern_def['description'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                    </td>
-                    <td>
-                        <textarea name="ggc_browser_block_patterns[<?php echo esc_attr($key); ?>][pattern]" rows="2" class="large-text code" style="width: 100%;"><?php echo esc_textarea($pattern_def['pattern'] ?? ''); ?></textarea>
-                    </td>
-                    <td>
-                        <button type="button" class="button button-secondary ggc-remove-row ggc-remove-pattern">削除</button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <p><button type="button" class="button button-primary" id="ggc-add-pattern">新しい不正UAパターンを追加</button></p>
+        <?php
+    }
 
+    private function render_browser_block_patterns_table($patterns, $default_patterns) {
+        $this->render_ua_definitions_table_common($patterns, $default_patterns, 'pattern');
+    }
+
+    private function render_browser_block_patterns_template() {
+        ?>
         <script type="text/template" id="ggc-pattern-row-template">
             <tr class="ggc-pattern-row new-row" data-key="__KEY__">
                 <td>
-                    <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                    <input type="text" name="ggc_browser_block_patterns[__KEY__][key]" value="__KEY__" class="regular-text ggc-pattern-key" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                    <input type="text" name="ggc_browser_block_patterns[__KEY__][group_label]" value="カスタム" class="regular-text" style="width: 100%;" />
+                    <p class="ggc-field-label"><strong>定義キー:</strong></p>
+                    <input type="text" name="ggc_browser_block_patterns[__KEY__][key]" value="__KEY__" class="regular-text ggc-pattern-key ggc-field-full" />
+                    <p class="ggc-field-label"><strong>グループラベル:</strong></p>
+                    <input type="text" name="ggc_browser_block_patterns[__KEY__][group_label]" value="カスタム" class="regular-text ggc-field-full" />
                 </td>
                 <td>
                     <p><strong>表示ラベル:</strong></p>
-                    <input type="text" name="ggc_browser_block_patterns[__KEY__][label]" value="カスタムパターン" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                    <input type="text" name="ggc_browser_block_patterns[__KEY__][description]" value="" class="regular-text" style="width: 100%;" />
+                    <input type="text" name="ggc_browser_block_patterns[__KEY__][label]" value="カスタムパターン" class="regular-text ggc-field-full" />
+                    <p class="ggc-field-label"><strong>説明文:</strong></p>
+                    <input type="text" name="ggc_browser_block_patterns[__KEY__][description]" value="" class="regular-text ggc-field-full" />
                 </td>
                 <td>
-                    <textarea name="ggc_browser_block_patterns[__KEY__][pattern]" rows="2" class="large-text code" style="width: 100%;"></textarea>
+                    <textarea name="ggc_browser_block_patterns[__KEY__][pattern]" rows="2" class="large-text code ggc-field-full"></textarea>
                 </td>
                 <td>
                     <button type="button" class="button button-secondary ggc-remove-row ggc-remove-pattern">削除</button>
@@ -1301,256 +1560,87 @@ class Custom_Admin_Settings {
         <?php
     }
 
+
+    // 診断用アクセス情報表示は trait の共通メソッドを利用してください
+
+    // traitのCustom_Admin_Diagnosticのrender_diagnostic_scheduleを利用するため、ここでの定義は削除
+
+
+    /**
+     * User-Agent 定義リストセクションの表示
+     */
+    public function render_crawler_definitions_section() {
+        $bots = Custom_Crawler_Core::get_allowable_bots();
+        $default_bots = ggc_get_default_bots();
+        $this->render_crawler_definitions_intro();
+        $this->render_crawler_definitions_table($bots, $default_bots);
+        $this->render_crawler_definitions_template();
+    }
+
+    /**
+     * IPアドレス範囲 定義リストセクションの表示 (URL入力欄追加版)
+     */
+    public function render_ip_range_definitions_section() {
+        Admin_IP_Ranges::render_section_1();
+    }
+    /**
+     * 不正UAパターン 定義リストセクションの表示
+     */
+    public function render_browser_block_patterns_section() {
+        $patterns = Custom_Crawler_Core::get_browser_block_patterns();
+        $default_patterns = ggc_get_default_browser_patterns();
+        $this->render_browser_block_patterns_intro();
+        $this->render_browser_block_patterns_table($patterns, $default_patterns);
+        $this->render_browser_block_patterns_template();
+    }
+
     public function sanitize_ip_range_definitions_2($input) {
-        $current = get_option('ggc_ip_range_definitions_2', []);
-        $defaults = ggc_get_default_ip_ranges_2();
-        $default_keys_map = [];
-        foreach ($defaults as $def_key => $def_val) {
-            $default_keys_map[strtolower($def_key)] = $def_key;
-        }
-
-        if (!is_array($input)) return [];
-
-        $new_input = [];
-
-        $simple_validate_ip_cidr = function ($range) {
-            $range = trim($range);
-            if (empty($range)) return false;
-            if (filter_var($range, FILTER_VALIDATE_IP)) return sanitize_text_field($range);
-            if (strpos($range, '/') !== false) {
-                list($ip, $mask) = explode('/', $range, 2);
-                $mask = intval($mask);
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) && $mask >= 0 && $mask <= 32) return sanitize_text_field($range);
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && $mask >= 0 && $mask <= 128) return sanitize_text_field($range);
-                if (strpos($ip, ':') !== false && preg_match('/^[0-9a-fA-F:]+$/', $ip) && $mask >= 0 && $mask <= 128) return sanitize_text_field($range);
-                if (strpos($ip, '.') !== false && preg_match('/^[0-9.]+$/', $ip) && $mask >= 0 && $mask <= 32) return sanitize_text_field($range);
-            }
-            return false;
-        };
-
-        foreach ($input as $key => $ip_def) {
-            $raw_key = $ip_def['key'] ?? $key;
-            if (empty(trim($raw_key))) continue;
-
-            $lower_key = strtolower($raw_key);
-            $new_key = '';
-            $is_default_key = false;
-
-            if (array_key_exists($lower_key, $default_keys_map)) {
-                $new_key = $default_keys_map[$lower_key];
-                $is_default_key = true;
-            } else {
-                $sanitized_key = sanitize_key($raw_key);
-                $new_key = !empty($sanitized_key) ? $sanitized_key : sanitize_key($key);
-            }
-
-            $ranges_input = '';
-            if (isset($ip_def['ranges'])) {
-                $ranges_input = is_array($ip_def['ranges']) ? implode("\n", array_map('strval', $ip_def['ranges'])) : (string) $ip_def['ranges'];
-            }
-
-            if (!$is_default_key && empty($ranges_input) && empty($ip_def['label']) && empty($ip_def['source_url'])) {
-                continue;
-            }
-
-            $ranges = preg_split('/[\r\n,]+/', $ranges_input, -1, PREG_SPLIT_NO_EMPTY);
-            $ranges = array_map('trim', $ranges);
-            $sanitized_ranges_raw = array_values(array_map('sanitize_text_field', array_filter($ranges)));
-            $sanitized_ranges_valid = array_values(array_filter(array_map($simple_validate_ip_cidr, $ranges)));
-
-            $is_auto = !empty($ip_def['is_auto']);
-            $default_def = $current[$new_key] ?? ['source_url' => ''];
-            $source_url_to_save = isset($ip_def['source_url']) ? esc_url_raw(trim($ip_def['source_url'])) : $default_def['source_url'];
-
-            // Initialize variables for this loop iteration
-            $loop_last_parse_error = null;
-            $loop_last_parse_time = null;
-            $loop_last_parse_count = 0;
-
-            if ($is_auto && !empty($source_url_to_save)) {
-                $parsed = Custom_Crawler_Core::parse_ip_list_from_url($source_url_to_save);
-                $loop_last_parse_time = time();
-
-                if (is_wp_error($parsed)) {
-                    $loop_last_parse_error = $parsed->get_error_message();
-                    add_settings_error('ggc_ips2_option_group', 'ggc_parse_failed_' . $new_key, sprintf('%s の自動解析に失敗しました: %s', esc_html($new_key), esc_html($loop_last_parse_error)), 'error');
-                } else {
-                    $parsed_clean = array_values(array_map('sanitize_text_field', $parsed));
-                    $sanitized_ranges_raw = $parsed_clean;
-                    $sanitized_ranges_valid = array_values(array_filter(array_map($simple_validate_ip_cidr, $parsed_clean)));
-                    $loop_last_parse_count = count($sanitized_ranges_raw);
-                }
-            } else {
-                // If not auto-updating on this save, preserve the last known status.
-                $loop_last_parse_error = $current[$new_key]['last_parse_error'] ?? null;
-                $loop_last_parse_time = $current[$new_key]['last_parse_time'] ?? null;
-                $loop_last_parse_count = $current[$new_key]['last_parse_count'] ?? 0;
-            }
-
-            $new_input[$new_key] = [
-                'ranges' => $sanitized_ranges_raw,
-                'validated_ranges' => $sanitized_ranges_valid,
-                'label' => sanitize_text_field($ip_def['label'] ?? ''),
-                'group_label' => sanitize_text_field($ip_def['group_label'] ?? 'その他'),
-                'description' => sanitize_textarea_field($ip_def['description'] ?? ''),
-                'allow_placeholder' => !empty($ip_def['allow_placeholder']),
-                'is_auto' => $is_auto,
-                'source_url' => $source_url_to_save,
-                'last_parse_error' => $loop_last_parse_error,
-                'last_parse_time' => $loop_last_parse_time,
-                'last_parse_count' => $loop_last_parse_count,
-            ];
-        }
-        return $new_input;
+        return Admin_IP_Ranges::sanitize_definitions_2($input);
     }
 
     public function render_ip_range_definitions_section_2() {
-        $ip_ranges = get_option('ggc_ip_range_definitions_2', []);
-        $default_ip_ranges = ggc_get_default_ip_ranges_2();
-        ?>
-        <p class="description">
-            投稿ごとの制御機能で使用するIPアドレス範囲のリストです。カスタムのIP範囲を追加・編集できます。
-        </p>
-        <p class="description">
-            - 定義キー : システム用、一意のキー。必須項目。英数字のみ登録可能。<br/>
-            - グローバルラベル : 管理画面でのグループ分けに使用されます。<br/>
-            - プレースホルダを許可 : （形式チェックに失敗してもこの値を保持します）<br/>
-            - 自動更新 : チェックすると保存時にURLから自動取得されます<br/>
-            - 説明文 : 管理画面での説明文。<br/>
-            - 表示ラベル : 管理画面での表示ラベル。<br/>
-            - 取得元URL (自動更新用) : IPアドレス範囲を定期的に自動取得するためのURLを指定します。<br/>
-            IPアドレス範囲 (CIDR形式) : 1行にIPv4またはIPv6の範囲を1つのCIDR形式で入力してください。例: <code>192.168.0.0/16</code><br/>
-        </p>
-        <p>
-            <?php
-            // Nonce provided for AJAX run
-            ?>
-            <?php $manual_url = wp_nonce_url( admin_url('admin-post.php?action=run_ggc_ip_update'), 'ggc_manual_ip_update_nonce' ); ?>
-            <button type="button" id="ggc-run-ip-update-2" class="button button-secondary ggc-run-ip-update-btn" data-nonce="<?php echo esc_attr(wp_create_nonce('ggc_run_update_nonce')); ?>" data-ajax-url="<?php echo esc_attr(admin_url('admin-ajax.php')); ?>" data-manual-url="<?php echo esc_url($manual_url); ?>">今すぐ IP 更新を強制実行する</button>
-            <span class="description" style="margin-left:10px;">(最終更新: <?php echo get_option('ggc_last_ip_update_time') ? human_time_diff(get_option('ggc_last_ip_update_time')) . '前' : '未実行'; ?>)</span>
-            <noscript><a href="<?php echo esc_url($manual_url); ?>" class="button" style="margin-left:10px;">JavaScript無効時に更新を実行</a></noscript>
-        </p>
-        <table class="wp-list-table widefat fixed striped" id="ggc-ip-ranges-table-2">
-            <thead>
-                <tr>
-                    <th style="width: 25%;">定義キー / グループ</th>
-                    <th style="width: 30%;">表示ラベル / 説明文 / 取得元URL</th>
-                    <th style="width: 35%;">IPアドレス範囲 (CIDR形式)</th>
-                    <th style="width: 10%;">操作</th>
-                </tr>
-            </thead>
-            <tbody id="ggc-ip-ranges-tbody-2">
-                <?php foreach ($ip_ranges as $key => $ip_def) :
-                    $is_default = isset($default_ip_ranges[$key]);
-                    $ranges_str = implode("\n", $ip_def['ranges'] ?? []);
-                    // $readonly_attr = $is_default ? 'readonly' : ''; // Allow editing default keys
-                    $source_url = $ip_def['source_url'] ?? ''; // URLを取得
-                ?>
-                <tr data-key="<?php echo esc_attr($key); ?>">
-                    <td>
-                        <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                        <input type="text"
-                               name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][key]"
-                               value="<?php echo esc_attr($key); ?>"
-                               class="regular-text ggc-ip-key"
-                               style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][group_label]" value="<?php echo esc_attr($ip_def['group_label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                            <p style="margin-top: 10px;"><label><input type="checkbox" name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][allow_placeholder]" value="1" <?php checked(!empty($ip_def['allow_placeholder']), true); ?> /> <strong>プレースホルダを許可</strong></label></p>
-                        <p style="margin-top:6px;"><label><input type="checkbox" name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][is_auto]" value="1" <?php checked(!empty($ip_def['is_auto']), true); ?> /> 自動更新 </label></p>
-
-
-                    </td>
-                    <td>
-                        <p><strong>表示ラベル:</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][label]" value="<?php echo esc_attr($ip_def['label'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                        <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][description]" value="<?php echo esc_attr($ip_def['description'] ?? ''); ?>" class="regular-text" style="width: 100%;" />
-                        <p style="margin-top: 6px;"><strong>取得元URL (自動更新用):</strong></p>
-                        <input type="text" name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][source_url]" value="<?php echo esc_url($source_url); ?>" class="regular-text" placeholder="https://..." style="width: 100%; font-size: 11px; color: #666;" />
-                    </td>
-                    <td>
-                        <textarea name="ggc_ip_range_definitions_2[<?php echo esc_attr($key); ?>][ranges]" rows="6" cols="50" class="large-text code" style="width: 100%;" <?php disabled($ip_def['is_auto'] ?? false, true); ?>><?php echo esc_textarea($ranges_str); ?></textarea>
-                        <p class="description">IPv4またはIPv6のCIDR形式。</p>
-                            <div class="ggc-parse-status" style="margin-top:6px;">
-                            <?php if (!empty($ip_def['last_parse_error'])): ?>
-                                <p style="color:#d9534f;margin:0;"><strong>解析エラー:</strong> <?php echo esc_html($ip_def['last_parse_error']); ?> (<?php echo wp_date(get_option('date_format') . ' ' . get_option('time_format'), intval($ip_def['last_parse_time'] ?? 0)); ?>)</p>
-                            <?php elseif (!empty($ip_def['last_parse_time'])): ?>
-                                <p style="color:#28a745;margin:0;"><strong>最終解析成功:</strong> <?php echo wp_date(get_option('date_format') . ' ' . get_option('time_format'), intval($ip_def['last_parse_time'] ?? 0)); ?>
-                                <?php if (isset($ip_def['last_parse_count'])): ?>
-                                    (<?php echo esc_html(number_format($ip_def['last_parse_count'])); ?> 件)
-                                <?php endif; ?>
-                                </p>
-                            <?php endif; ?>
-                        </div>
-                        <?php if (!empty($ip_def['is_auto'])): ?>
-                            <p style="color: green; margin-top: 5px;">✅ 自動更新対象 (テキスト入力は無視されます)</p>
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <button type="button" class="button button-secondary ggc-remove-row ggc-remove-ip">削除</button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <p><button type="button" class="button button-primary" id="ggc-add-ip-2">新しいIP範囲定義を追加</button></p>
-
-        <script type="text/template" id="ggc-ip-row-template-2">
-            <tr class="ggc-ip-row new-row" data-key="__KEY__">
-                <td>
-                    <p style="margin-top: 5px;"><strong>定義キー:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions_2[__KEY__][key]" value="__KEY__" class="regular-text ggc-ip-key" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>グループラベル:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions_2[__KEY__][group_label]" value="カスタム" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top: 10px;"><label><input type="checkbox" name="ggc_ip_range_definitions_2[__KEY__][allow_placeholder]" value="1" checked="checked" /> <strong>プレースホルダを許可</strong></label></p>
-                    <p style="margin-top:6px;"><label><input type="checkbox" name="ggc_ip_range_definitions_2[__KEY__][is_auto]" value="1" checked="checked" /> 自動更新 (チェックすると保存時にURLから自動取得されます)</label></p>
-                </td>
-                <td>
-                    <p><strong>表示ラベル:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions_2[__KEY__][label]" value="カスタムIP範囲" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top: 5px;"><strong>説明文:</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions_2[__KEY__][description]" value="" class="regular-text" style="width: 100%;" />
-                    <p style="margin-top:6px;"><strong>取得元URL (自動更新用):</strong></p>
-                    <input type="text" name="ggc_ip_range_definitions_2[__KEY__][source_url]" value="" class="regular-text" placeholder="https://..." style="width: 100%; font-size: 11px; color: #666;" />
-                </td>
-                <td>
-                    <textarea name="ggc_ip_range_definitions_2[__KEY__][ranges]" rows="4" cols="50" class="large-text code" style="width: 100%;"></textarea>
-                    <p class="description">IPv4またはIPv6のCIDR形式。</p>
-                </td>
-                <td>
-                    <button type="button" class="button button-secondary ggc-remove-row ggc-remove-ip">削除</button>
-                </td>
-            </tr>
-        </script>
-        <?php
+        Admin_IP_Ranges::render_section_2();
     }
     // --------------------------------------------------------
 
     public function admin_notice_ip_update() {
-        if (!current_user_can('manage_options') || is_network_admin()) return;
+        if (! Admin_Utils::current_user_can_manage_options() || is_network_admin()) return;
 
         $screen = get_current_screen();
         if ($screen->id !== 'settings_page_ggc-crawler-definitions') return;
 
-        $last_update = get_option('ggc_last_ip_update_time');
+        $last_update = GGC_Options::get_last_ip_update_time();
 
         if ($last_update) {
-            $time_diff = human_time_diff($last_update, current_time('timestamp'));
-            $frequency = get_option('ggc_ip_update_frequency', 'daily');
+            $time_diff = Display_Utils::human_time_diff($last_update, current_time('timestamp'));
+            $frequency = GGC_Options::get_ip_update_frequency('daily');
             $interval_seconds = DAY_IN_SECONDS * 2;
 
             if (current_time('timestamp') - $last_update > $interval_seconds) {
-                echo '<div class="notice notice-warning is-dismissible"><p><strong>クローラー個別制御プラグイン:</strong> 既知クローラーIPアドレス範囲の自動更新が長期間実行されていません (最終更新: ' . esc_html($time_diff) . '前)。Cronが正常に動作しているか確認してください。</p></div>';
+                $nonce = wp_create_nonce('ggc_run_update_nonce');
+                $ajax_url = admin_url('admin-ajax.php');
+                $manual_url = wp_nonce_url(admin_url('admin-post.php?action=run_ggc_ip_update'), 'ggc_manual_ip_update_nonce');
+                ?>
+                <div class="notice notice-warning is-dismissible">
+                    <p><strong>クローラー個別制御プラグイン:</strong> 既知クローラーIPアドレス範囲の自動更新が長期間実行されていません (最終更新: <?php echo esc_html($time_diff); ?>)。Cronが正常に動作しているか確認してください。</p>
+                    <p>
+                        <button type="button" class="button button-primary ggc-run-ip-update-btn" data-nonce="<?php echo esc_attr($nonce); ?>" data-ajax-url="<?php echo esc_attr($ajax_url); ?>" data-manual-url="<?php echo esc_url($manual_url); ?>" style="margin-bottom: 10px;">
+                            <span class="dashicons dashicons-update" style="vertical-align: middle;"></span>
+                            <span class="ggc-btn-text">今すぐ IP 更新を強制実行する</span>
+                        </button>
+                        <span class="description" style="margin-left: 8px;">クリックすると即座にIP範囲を更新します。</span>
+                    </p>
+                </div>
+                <?php
             }
         }
     }
 
     public function admin_notice_manual_ip_update_success() {
-        if (!current_user_can('manage_options') || is_network_admin()) return;
+        if (! Admin_Utils::current_user_can_manage_options() || is_network_admin()) return;
         if (isset($_GET['ip-updated']) && $_GET['ip-updated'] === '1') {
-            $res = get_option('ggc_last_ip_update_result');
-            $time = $res['time'] ?? get_option('ggc_last_ip_update_time');
+            $res = GGC_Options::get_last_ip_update_result();
+            $time = $res['time'] ?? GGC_Options::get_last_ip_update_time();
             $google = isset($res['google_count']) ? intval($res['google_count']) : null;
 
             $openai = isset($res['openai_count']) ? intval($res['openai_count']) : null;
@@ -1562,7 +1652,7 @@ class Custom_Admin_Settings {
                 $msg .= ' (' . implode(', ', $parts) . ')';
             }
             if ($time) {
-                $msg .= ' 最終更新: ' . human_time_diff($time) . '前';
+                $msg .= ' 最終更新: ' . Display_Utils::human_time_diff($time);
             }
             echo '<div class="notice notice-success is-dismissible"><p>' . $msg . '</p></div>';
            } else if (isset($_GET['ip-updated']) && $_GET['ip-updated'] === '0') {
@@ -1574,31 +1664,25 @@ class Custom_Admin_Settings {
      * AJAX: run IP update and return result
      */
     public function ajax_run_ip_update() {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => '権限がありません']);
-        }
-        check_ajax_referer('ggc_run_update_nonce', 'nonce');
+        Admin_Utils::ajax_require_nonce_and_cap('ggc_run_update_nonce', 'nonce', 'manage_options');
 
         $core = Custom_Crawler_Core::get_instance();
         $res = $core->run_update_with_result();
 
-        wp_send_json_success(['result' => $res]);
+        Ajax_Utils::success(['result' => $res]);
     }
 
     /**
      * AJAX: 指定された source_url を解析して IP/CIDR リストを返す
      */
     public function ajax_parse_ip_source() {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => '権限がありません']);
-        }
-        check_ajax_referer('ggc_run_update_nonce', 'nonce');
+        Admin_Utils::ajax_require_nonce_and_cap('ggc_run_update_nonce', 'nonce', 'manage_options');
 
         $url = isset($_POST['url']) ? esc_url_raw(trim($_POST['url'])) : '';
         $key = isset($_POST['key']) ? sanitize_key($_POST['key']) : '';
 
         if (empty($url)) {
-            wp_send_json_error(['message' => 'URLが指定されていません']);
+            Ajax_Utils::error(['message' => 'URLが指定されていません'], 400);
         }
 
         $parsed = Custom_Crawler_Core::parse_ip_list_from_url($url);
@@ -1610,8 +1694,8 @@ class Custom_Admin_Settings {
         // Since this is just a helper to parse and return JSON, we don't necessarily need to save here?
         // Wait, the original code updates the option.
 
-        $ip_ranges_1 = get_option('ggc_ip_range_definitions', []);
-        $ip_ranges_2 = get_option('ggc_ip_range_definitions_2', []);
+        $ip_ranges_1 = GGC_Options::get_ip_range_definitions_1() ?: [];
+        $ip_ranges_2 = GGC_Options::get_ip_range_definitions_2() ?: [];
 
         $target_option = 'ggc_ip_range_definitions';
         $target_ranges = $ip_ranges_1;
@@ -1633,7 +1717,7 @@ class Custom_Admin_Settings {
             $target_ranges[$key]['last_parse_error'] = $parsed->get_error_message();
             $target_ranges[$key]['last_parse_time'] = time();
             update_option($target_option, $target_ranges);
-            wp_send_json_error(['message' => $parsed->get_error_message()]);
+            Ajax_Utils::error(['message' => $parsed->get_error_message()], 400);
         }
 
         // 成功した場合、エラー情報をクリアして時刻を記録
@@ -1641,7 +1725,7 @@ class Custom_Admin_Settings {
         $target_ranges[$key]['last_parse_time'] = time();
         update_option($target_option, $target_ranges);
 
-        wp_send_json_success(['ranges' => $parsed]);
+        Ajax_Utils::success(['ranges' => $parsed]);
     }
 
 
@@ -1649,7 +1733,7 @@ class Custom_Admin_Settings {
          * 管理画面: 設定保存時に不正なIP範囲があればユーザーに通知する
          */
         public function admin_notice_invalid_ip_ranges_on_save() {
-            if (!current_user_can('manage_options') || is_network_admin()) return;
+            if (! Admin_Utils::current_user_can_manage_options() || is_network_admin()) return;
             $screen = get_current_screen();
             if (!$screen || $screen->id !== 'settings_page_ggc-crawler-definitions') return;
 
@@ -1677,7 +1761,7 @@ class Custom_Admin_Settings {
                 }
                 if (!empty($filtered)) {
                     echo '<div class="notice notice-warning is-dismissible"><p><strong>クローラー個別制御:</strong> 入力された一部の IP/CIDR は形式チェックに失敗しましたが、プレースホルダとして保存されました。必要に応じて正しい形式に修正してください。</p>';
-                    echo '<ul style="margin-top:6px;">';
+                    echo '<ul class="ggc-list-compact">';
                     foreach ($filtered as $key => $invalids) {
                         $label = $ip_ranges[$key]['label'] ?? $key;
                         echo '<li><strong>' . esc_html($label) . '</strong> (キー: <code>' . esc_html($key) . '</code>): ' . esc_html(implode(', ', $invalids)) . '</li>';
@@ -1690,13 +1774,9 @@ class Custom_Admin_Settings {
 
 
     public function admin_action_run_ggc_ip_update() {
-        if (!current_user_can('manage_options')) {
-            wp_die('権限がありません。');
-        }
+        Admin_Utils::require_manage_options_or_die();
 
-        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_key(wp_unslash($_GET['_wpnonce'])), 'ggc_manual_ip_update_nonce')) {
-            wp_die('セキュリティチェックに失敗しました。');
-        }
+        Admin_Utils::require_get_nonce_and_cap('ggc_manual_ip_update_nonce');
 
         $updated = Custom_Crawler_Core::get_instance()->update_all_ip_ranges();
 
@@ -1716,13 +1796,9 @@ class Custom_Admin_Settings {
      * IP設定を削除して初期状態に戻す
      */
     public function admin_action_reset_ggc_ip_settings() {
-        if (!current_user_can('manage_options')) {
-            wp_die('権限がありません。');
-        }
+        Admin_Utils::require_manage_options_or_die();
 
-        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_key(wp_unslash($_GET['_wpnonce'])), 'ggc_reset_ip_settings_nonce')) {
-            wp_die('セキュリティチェックに失敗しました。');
-        }
+        Admin_Utils::require_get_nonce_and_cap('ggc_reset_ip_settings_nonce');
 
         $tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'ips';
 
@@ -1749,7 +1825,7 @@ class Custom_Admin_Settings {
      * リセット完了通知
      */
     public function admin_notice_reset_success() {
-        if (!current_user_can('manage_options') || is_network_admin()) return;
+        if (! Admin_Utils::current_user_can_manage_options() || is_network_admin()) return;
         if (isset($_GET['ip-reset']) && $_GET['ip-reset'] === '1') {
             echo '<div class="notice notice-success is-dismissible"><p><strong>クローラー個別制御プラグイン:</strong> IPアドレス範囲設定を初期化（削除）しました。デフォルト値が表示されています。</p></div>';
         }
@@ -1759,9 +1835,11 @@ class Custom_Admin_Settings {
      * 全データクリア完了通知
      */
     public function admin_notice_clear_all_success() {
-        if (!current_user_can('manage_options') || is_network_admin()) return;
+        if (! Admin_Utils::current_user_can_manage_options() || is_network_admin()) return;
         if (isset($_GET['ggc-cleared']) && $_GET['ggc-cleared'] === '1') {
             echo '<div class="notice notice-success is-dismissible"><p><strong>クローラー個別制御プラグイン:</strong> 設定オプション・投稿/メディアのメタデータ・IP更新履歴を削除しました。</p></div>';
+            // 2秒後に自動リロード（リロード時に ggc-cleared クエリを除去して無限ループ防止）
+            echo '<script>setTimeout(function(){var url = new URL(window.location.href);url.searchParams.delete("ggc-cleared");window.location.replace(url.toString());}, 2000);</script>';
         }
     }
 
@@ -1769,13 +1847,13 @@ class Custom_Admin_Settings {
      * 全データ（オプション/メタ/履歴）を削除
      */
     public function admin_action_clear_all_data() {
-        if (!current_user_can('manage_options')) {
-            wp_die('権限がありません。');
-        }
+        Admin_Utils::require_manage_options_or_die();
 
-        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_key(wp_unslash($_GET['_wpnonce'])), 'ggc_clear_all_data_nonce')) {
-            wp_die('セキュリティチェックに失敗しました。');
-        }
+        Admin_Utils::require_get_nonce_and_cap('ggc_clear_all_data_nonce');
+
+        // まずフラグを設定（できるだけ早く）
+        update_option('ggc_clear_all_done', '1');
+        wp_cache_flush();
 
         global $wpdb;
 
@@ -1783,9 +1861,11 @@ class Custom_Admin_Settings {
         $opt_like = $wpdb->esc_like('ggc_') . '%';
         $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $opt_like));
 
-        // _ggc_ で始まる post_meta を削除（投稿/メディア）
+        // 投稿/メディアに保存された ggc_ 系メタを削除
         $meta_like = $wpdb->esc_like('_ggc_') . '%';
         $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s", $meta_like));
+        $meta_like2 = $wpdb->esc_like('ggc_') . '%';
+        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s", $meta_like2));
 
         // スケジュールをクリア
         wp_clear_scheduled_hook('ggc_daily_ip_update');
@@ -1793,6 +1873,22 @@ class Custom_Admin_Settings {
         // IP更新頻度を初期化してスケジュール再設定
         update_option('ggc_ip_update_frequency', 'daily');
         Custom_Crawler_Core::ip_update_schedule_check();
+
+        // 定義リストは空として保持（デフォルト復元を抑止）
+        update_option('ggc_crawler_definitions', []);
+        update_option('ggc_browser_block_patterns', []);
+        update_option('ggc_ip_range_definitions', []);
+        update_option('ggc_ip_range_definitions_2', []);
+        update_option('ggc_page_eval_messages', []);
+
+        // Markdownテンプレートは空として保持（デフォルト復元を抑止）
+        update_option('ggc_markdown_templates', []);
+        update_option('ggc_markdown_templates_cleared', '1');
+        // フラグは既に設定済み
+        update_option('ggc_clear_all_done', '1');
+
+        // キャッシュをクリア
+        wp_cache_flush();
 
         $redirect_url = remove_query_arg(['action', '_wpnonce'], wp_get_referer());
         $redirect_url = add_query_arg('ggc-cleared', '1', $redirect_url);
@@ -1804,199 +1900,13 @@ class Custom_Admin_Settings {
         wp_safe_redirect($redirect_url);
         exit;
     }
-    /**
-     * 診断ツールセクションの表示
-     */
-
-    public function render_diagnostic_tools_section() {
-        // 現在のIPアドレスとUAを取得 (診断用)
-        // NOTE: HTTP_X_FORWARDED_FORなどは利用せず、最も信頼性の高い REMOTE_ADDR を使用
-        $client_ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '不明';
-        $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '不明';
-
-        // Cronジョブの次の実行時刻を取得
-        $next_schedule = wp_next_scheduled('ggc_daily_ip_update');
-        $next_run = $next_schedule ? wp_date(get_option('date_format') . ' ' . get_option('time_format'), $next_schedule) : '未設定';
-        $frequency = get_option('ggc_ip_update_frequency', 'daily');
-        // IP範囲定義リストを取得
-        $ip_ranges_1 = get_option('ggc_ip_range_definitions', []);
-        $ip_ranges_2 = get_option('ggc_ip_range_definitions_2', []);
-
-        // Merge defaults if empty
-        if (empty($ip_ranges_1)) $ip_ranges_1 = ggc_get_default_ip_ranges();
-        if (empty($ip_ranges_2)) $ip_ranges_2 = ggc_get_default_ip_ranges_2();
-
-        // Custom_Crawler_Coreのip_in_cidrメソッドが存在するかをチェック
-        $is_core_check_available = class_exists('Custom_Crawler_Core') && method_exists('Custom_Crawler_Core', 'ip_in_cidr');
-
-        ?>
-        <div id="ggc-diagnostic-tools">
-            <h2>診断ツール</h2>
-            <p class="description">現在のアクセス情報やCronスケジュールの確認、特定のIPアドレスのチェックができます。</p>
-
-            <h3 style="margin-top: 20px;">現在のアクセス情報</h3>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">あなたの現在のIPアドレス</th>
-                    <td><code><?php echo esc_html($client_ip); ?></code></td>
-                </tr>
-                <tr>
-                    <th scope="row">あなたの現在のUser-Agent</th>
-                    <td><code><?php echo esc_html($user_agent); ?></code></td>
-                </tr>
-            </table>
-
-            <h3 style="margin-top: 20px;">IPアドレス更新スケジュール</h3>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">設定頻度</th>
-                    <td><?php
-                        $frequency_labels = [
-                            'disabled' => '停止',
-                            'hourly' => '毎時',
-                            'twicedaily' => '半日',
-                            'daily' => '毎日',
-                            'weekly' => '毎週',
-                            'monthly' => '毎月',
-                            'biannually' => '半年',
-                            'annually' => '毎年'
-                        ];
-                        echo esc_html($frequency_labels[$frequency] ?? '毎日');
-                    ?></td>
-                </tr>
-                <tr>
-                    <th scope="row">次回の実行予定時刻</th>
-                    <td>
-                        <?php echo esc_html($next_run); ?>
-                        <?php if ($next_schedule): ?>
-                            <p class="description">（<?php echo human_time_diff($next_schedule) . '後に実行予定'; ?>）</p>
-                        <?php else: ?>
-                            <p class="description" style="color: red;">⚠️ スケジュールが設定されていません。一般設定に戻って保存し直してください。</p>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            </table>
-
-            <h3 style="margin-top: 20px;">IPアドレス範囲チェック（テスト）</h3>
-            <form method="post" action="" id="ggc-ip-test-form">
-                <?php wp_nonce_field('ggc_ip_range_test_nonce', 'ggc_ip_range_test_nonce_field'); ?>
-                <table class="form-table">
-                    <tr>
-                        <th scope="row"><label for="ggc_ip_to_test">テストするIPアドレス</label></th>
-                        <td>
-                            <input type="text" id="ggc_ip_to_test" name="ggc_ip_to_test" value="<?php echo esc_attr($client_ip); ?>" class="regular-text code" placeholder="例: 66.249.66.1" style="width: 300px;" />
-                            <input type="submit" class="button button-secondary" value="チェックを実行" />
-                            <p class="description">指定したIPアドレスが、登録されているどのIP範囲定義に該当するかをチェックします。</p>
-                        </td>
-                    </tr>
-                </table>
-            </form>
-
-            <?php
-            // IPチェックの結果表示ロジック
-            if (isset($_POST['ggc_ip_to_test']) && check_admin_referer('ggc_ip_range_test_nonce', 'ggc_ip_range_test_nonce_field')) {
-                $ip_to_test = sanitize_text_field(wp_unslash($_POST['ggc_ip_to_test']));
-
-                // IPアドレスの基本的な形式チェック
-                if (!filter_var($ip_to_test, FILTER_VALIDATE_IP)) {
-                    echo '<div class="notice notice-error"><p><strong>IPチェック結果:</strong> 入力された値は有効なIPアドレスではありません。</p></div>';
-                } elseif ($is_core_check_available) {
-                    $matched_results = [];
-
-                    // Check List 1
-                    foreach ($ip_ranges_1 as $key => $ip_def) {
-                        $ranges = $ip_def['validated_ranges'] ?? $ip_def['ranges'] ?? [];
-                        if (is_array($ranges)) {
-                            foreach ($ranges as $cidr) {
-                                if (Custom_Crawler_Core::ip_in_cidr($ip_to_test, $cidr)) {
-                                    $matched_results[] = [
-                                        'list' => 'IPアドレス範囲1',
-                                        'key' => $key,
-                                        'label' => $ip_def['label'] ?? $key
-                                    ];
-                                    break; // Found in this key, move to next key
-                                }
-                            }
-                        }
-                    }
-
-                    // Check List 2
-                    foreach ($ip_ranges_2 as $key => $ip_def) {
-                        $ranges = $ip_def['validated_ranges'] ?? $ip_def['ranges'] ?? [];
-                        if (is_array($ranges)) {
-                            foreach ($ranges as $cidr) {
-                                if (Custom_Crawler_Core::ip_in_cidr($ip_to_test, $cidr)) {
-                                    $matched_results[] = [
-                                        'list' => 'IPアドレス範囲2',
-                                        'key' => $key,
-                                        'label' => $ip_def['label'] ?? $key
-                                    ];
-                                    break; // Found in this key, move to next key
-                                }
-                            }
-                        }
-                    }
-
-                    if (!empty($matched_results)) {
-                        echo '<div class="notice notice-success"><p><strong>IPチェック結果:</strong> IPアドレス <code>' . esc_html($ip_to_test) . '</code> は以下の定義範囲に一致しました。</p>';
-                        echo '<ul>';
-                        foreach ($matched_results as $match) {
-                            echo '<li><strong>' . esc_html($match['list']) . '</strong> - <strong>' . esc_html($match['label']) . '</strong> (キー: <code>' . esc_html($match['key']) . '</code>)</li>';
-                        }
-                        echo '</ul></div>';
-                    } else {
-                        echo '<div class="notice notice-warning"><p><strong>IPチェック結果:</strong> IPアドレス <code>' . esc_html($ip_to_test) . '</code> は、登録されている<strong>どのIP範囲にも一致しませんでした</strong>。</p></div>';
-                    }
-                } else {
-                     echo '<div class="notice notice-info"><p><strong>IPチェック情報:</strong> IPアドレスチェックを実行するコア機能が利用できません。プラグインのコアファイル (class-crawler-core.php) が正しく読み込まれているか確認してください。</p></div>';
-                }
-            }
-            ?>
-        </div>
-        <?php
-    }
-
-
-    // 行ごとの IP 保存は廃止しています（フルページ保存を使用してください）
-
-    /**
-     * Validate a single IP or CIDR and return sanitized string or false
-     */
-    private function validate_ip_or_cidr($range) {
-        $range = trim($range);
-        if (empty($range)) return false;
-
-        if (filter_var($range, FILTER_VALIDATE_IP)) {
-            return sanitize_text_field($range);
-        }
-
-        if (strpos($range, '/') !== false) {
-            list($ip, $mask) = explode('/', $range, 2);
-            $mask = intval($mask);
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) && $mask >= 0 && $mask <= 32) {
-                return sanitize_text_field($range);
-            }
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && $mask >= 0 && $mask <= 128) {
-                return sanitize_text_field($range);
-            }
-            // Fallback permissive CIDR checks (when filter_var may fail on valid-looking IPv6 shorthand)
-            if (strpos($ip, ':') !== false && preg_match('/^[0-9a-fA-F:]+$/', $ip) && $mask >= 0 && $mask <= 128) {
-                return sanitize_text_field($range);
-            }
-            if (strpos($ip, '.') !== false && preg_match('/^[0-9.]+$/', $ip) && $mask >= 0 && $mask <= 32) {
-                return sanitize_text_field($range);
-            }
-        }
-
-        return false;
-    }
 
 
     /**
      * おすすめ設定のインポート完了通知
      */
     public function admin_notice_import_success() {
-        if (!current_user_can('manage_options')) return;
+        if (! Admin_Utils::current_user_can_manage_options()) return;
         if (isset($_GET['settings-imported']) && $_GET['settings-imported'] === '1') {
             echo '<div class="notice notice-success is-dismissible"><p><strong>クローラー個別制御:</strong> おすすめ設定をインポートしました。</p></div>';
         }
@@ -2006,25 +1916,25 @@ class Custom_Admin_Settings {
      * おすすめ設定をインポートするアクション
      */
     public function admin_action_import_default_settings() {
-        if (!current_user_can('manage_options')) {
-            wp_die('権限がありません。');
-        }
+        Admin_Utils::require_manage_options_or_die();
 
-        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_key(wp_unslash($_GET['_wpnonce'])), 'ggc_import_defaults_nonce')) {
-            wp_die('セキュリティチェックに失敗しました。');
-        }
+        Admin_Utils::require_get_nonce_and_cap('ggc_import_defaults_nonce');
 
         // 現在の設定を取得
-        $current_bots = get_option('ggc_crawler_definitions', []);
-        $current_ips = get_option('ggc_ip_range_definitions', []);
-        $current_ips_2 = get_option('ggc_ip_range_definitions_2', []);
-        $current_patterns = get_option('ggc_browser_block_patterns', []);
+        $current_bots = GGC_Options::get_crawler_definitions() ?: [];
+        $current_ips = GGC_Options::get_ip_range_definitions_1() ?: [];
+        $current_ips_2 = GGC_Options::get_ip_range_definitions_2() ?: [];
+        $current_patterns = GGC_Options::get_browser_block_patterns() ?: [];
+        $current_templates = GGC_Options::get_markdown_templates();
+        $current_page_eval = GGC_Options::get_page_eval_messages();
 
         // デフォルト設定を取得
         $default_bots = ggc_get_default_bots();
         $default_ips = ggc_get_default_ip_ranges();
         $default_ips_2 = ggc_get_default_ip_ranges_2();
         $default_patterns = ggc_get_default_browser_patterns();
+        $default_templates = ggc_get_default_markdown_templates();
+        $default_page_eval = ggc_get_default_page_eval_messages();
 
         // --- 堅牢なマージ処理 ---
         // 既存のキーをすべて小文字で保持
@@ -2032,6 +1942,8 @@ class Custom_Admin_Settings {
         $existing_ip_keys = array_map('strtolower', array_keys($current_ips));
         $existing_ip_keys_2 = array_map('strtolower', array_keys($current_ips_2));
         $existing_pattern_keys = array_map('strtolower', array_keys($current_patterns));
+        $existing_template_keys = array_map('strtolower', array_keys($current_templates));
+        $existing_page_eval_keys = array_map('strtolower', array_keys($current_page_eval));
 
         // デフォルト設定をループし、小文字に変換したキーが存在しない場合のみ追加
         foreach ($default_bots as $key => $value) {
@@ -2054,12 +1966,43 @@ class Custom_Admin_Settings {
                 $current_patterns[$key] = $value;
             }
         }
+        foreach ($default_page_eval as $key => $value) {
+            if (!in_array(strtolower($key), $existing_page_eval_keys)) {
+                $current_page_eval[$key] = $value;
+            }
+        }
+        foreach ($default_templates as $key => $value) {
+            if (!in_array(strtolower($key), $existing_template_keys)) {
+                $current_templates[$key] = $value;
+            }
+        }
 
         // データベースを更新
+        // update_option は register_setting で登録した sanitize_option フィルターを
+        // 自動的に通すため、sanitize_crawler_definitions が呼ばれてキー名が
+        // 小文字化されてしまう問題を防ぐため、保存前にフィルターを一時的に外す。
+        global $wp_filter;
+        $saved_bot_filter = isset($wp_filter['sanitize_option_ggc_crawler_definitions'])
+            ? clone $wp_filter['sanitize_option_ggc_crawler_definitions'] : null;
+        $saved_pattern_filter = isset($wp_filter['sanitize_option_ggc_browser_block_patterns'])
+            ? clone $wp_filter['sanitize_option_ggc_browser_block_patterns'] : null;
+        remove_all_filters('sanitize_option_ggc_crawler_definitions');
+        remove_all_filters('sanitize_option_ggc_browser_block_patterns');
+
         update_option('ggc_crawler_definitions', $current_bots);
         update_option('ggc_ip_range_definitions', $current_ips);
         update_option('ggc_ip_range_definitions_2', $current_ips_2);
         update_option('ggc_browser_block_patterns', $current_patterns);
+        update_option('ggc_markdown_templates', $current_templates);
+        update_option('ggc_page_eval_messages', $current_page_eval);
+
+        // フィルターを元に戻す
+        if ($saved_bot_filter !== null) {
+            $wp_filter['sanitize_option_ggc_crawler_definitions'] = $saved_bot_filter;
+        }
+        if ($saved_pattern_filter !== null) {
+            $wp_filter['sanitize_option_ggc_browser_block_patterns'] = $saved_pattern_filter;
+        }
 
         // インポート直後にIPアドレスの自動取得を実行
         Custom_Crawler_Core::get_instance()->update_all_ip_ranges();

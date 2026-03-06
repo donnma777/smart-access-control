@@ -1,0 +1,280 @@
+/* テーブル行の非表示制御用クラス */
+.ggc-hidden-row {
+    display: none !important;
+}
+
+/* 非表示制御用クラス */
+.ggc-hidden {
+    display: none !important;
+}
+
+/* custom-crawler-control\css\admin-settings.css */
+
+/* Global form layout */
+
+select,
+.ggc-settings-select,
+.ggc-settings-select--full {
+    max-width: 100% !important;
+}
+
+select,
+#ggc_markdown_replace_enabled,
+#ggc_markdown_global_template_mode,
+#ggc_markdown_global_template_key,
+#ggc_global_user_agent_control_select,
+#ggc_global_ip_evaluation_select,
+#ggc_global_media_user_agent_control_select,
+#ggc_global_media_ip_evaluation_select,
+#ggc_global_ua_redirect_mode_select,
+#ggc_global_ip_redirect_mode_select,
+#ggc_global_ua_block_message_key,
+#ggc_global_ip_block_message_key {
+    display: block;
+    margin: 6px 0 10px;
+    width: 100%;
+}
+
+.ggc-settings-select,
+.ggc-settings-select--full {
+    display: block;
+    margin: 6px 0 10px;
+}
+
+.ggc-settings-block {
+    margin-top: 8px;
+}
+
+/* Markdown global lists spacing */
+.ggc-markdown-global-list {
+    margin-top: 12px;
+}
+
+/* Checkbox list layout */
+.ggc-scroll-panel,
+.ggc-panel--scroll,
+.ggc-panel--scroll-sm {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    background: #fff;
+}
+
+.ggc-item-label,
+.ggc-item-tight,
+.ggc-crawler-item,
+.ggc-ip-range-item,
+.ggc-page-pattern-item {
+    display: block;
+    margin: 4px 0;
+    line-height: 1.4;
+}
+
+.ggc-group-title,
+.ggc-section-title {
+    margin: 8px 0 4px;
+}
+
+.ggc-settings-group-header {
+    cursor: pointer;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 4px;
+    margin: 10px 0 6px;
+}
+
+.ggc-settings-group-header--row td {
+    background: #f6f7f7;
+    padding: 8px 10px;
+}
+
+.ggc-settings-toggle-hint {
+    float: right;
+    color: #666;
+    font-size: 11px;
+}
+
+.ggc-settings-arrow {
+    margin-right: 4px;
+    transition: transform 0.15s ease-in-out;
+}
+
+.ggc-settings-arrow.rotated {
+    transform: rotate(90deg);
+}
+
+.ggc-settings-toggle-all {
+    float: right;
+    cursor: pointer;
+    color: #0073aa;
+    font-size: 11px;
+}
+
+.ggc-settings-group-content {
+    padding-left: 4px;
+}
+
+.ggc-section-title--spaced {
+    margin-top: 12px;
+}
+
+/* Description spacing */
+.ggc-settings-desc,
+.ggc-settings-desc-compact,
+.ggc-settings-desc-tight,
+.ggc-markdown-global-desc,
+.ggc-settings-note {
+    margin: 6px 0 6px;
+}
+
+/* Markdown template editor layout */
+.ggc-md-template-controls,
+.ggc-md-template-editor {
+    max-width: 100%;
+}
+
+.ggc-md-template-select,
+.ggc-md-template-field {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* Page evaluation table layout */
+#ggc-page-eval-table input[type="text"],
+#ggc-page-eval-table input[type="number"],
+#ggc-page-eval-table textarea {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+#ggc-page-eval-table .small-text {
+    min-width: 0;
+}
+
+/* Definition tables layout fixes */
+#ggc-bots-table,
+#ggc-patterns-table,
+#ggc-ip-ranges-table,
+#ggc-ip-ranges-table-2 {
+    table-layout: fixed;
+}
+
+#ggc-bots-table th,
+#ggc-bots-table td,
+#ggc-patterns-table th,
+#ggc-patterns-table td,
+#ggc-ip-ranges-table th,
+#ggc-ip-ranges-table td,
+#ggc-ip-ranges-table-2 th,
+#ggc-ip-ranges-table-2 td {
+    vertical-align: top;
+}
+
+.ggc-field-full,
+.ggc-field-source {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.ggc-th-20 {
+    width: 20%;
+}
+
+.ggc-th-25 {
+    width: 25%;
+}
+
+/* Modal styles for IP update results */
+.ggc-modal-overlay,
+.ggc-ip-update-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100000;
+}
+
+.ggc-modal-box {
+    background: #fff;
+    padding: 24px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.ggc-modal-box--wide {
+    max-width: 800px;
+}
+
+.ggc-modal-box--compact {
+    max-width: 400px;
+    text-align: center;
+}
+
+.ggc-modal-close {
+    float: right;
+    margin-bottom: 12px;
+}
+
+.ggc-modal-subtitle {
+    margin-top: 16px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.ggc-modal-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+.ggc-modal-th,
+.ggc-modal-td {
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.ggc-modal-th {
+    background: #f5f5f5;
+    font-weight: 600;
+}
+
+.ggc-modal-td--break {
+    word-break: break-all;
+}
+
+.ggc-modal-loading {
+    font-size: 16px;
+    padding: 20px;
+}
+
+.ggc-th-45 {
+    width: 45%;
+}
+
+.ggc-th-10 {
+    width: 10%;
+    min-width: 90px;
+}
+
+.ggc-th-30 {
+    width: 30%;
+}
+
+.ggc-th-35 {
+    width: 35%;
+}

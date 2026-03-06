@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Smart Access Control アクセス制御
  * Description: アクセスを精密に制御する管理者向けプラグイン。Advanced access control plugin for administrators.
- * Version: 3.0.1
+ * Version: 4.0.0
  * Text Domain: custom-crawler-control
  * Requires at least: 4.9+
  * Requires PHP: 7.0+
@@ -30,7 +30,13 @@
     // --------------------------------------------------------
 
     // コアロジック (フロントエンドの制御、IP更新、ヘルパー関数)
-    require_once plugin_dir_path(__FILE__) . 'includes/class-crawler-core.php';
+    // 公開向けコードは public/ に移動
+    require_once plugin_dir_path(__FILE__) . 'public/class-eval-utils.php';
+    require_once plugin_dir_path(__FILE__) . 'public/class-crawler-core.php';
+
+    // 共通ユーティリティ
+    require_once plugin_dir_path(__FILE__) . 'includes/class-option-utils.php';
+    require_once plugin_dir_path(__FILE__) . 'includes/class-debug-logger.php';
 
     // 管理画面設定ページ (admin/パスで読み込む)
     require_once plugin_dir_path(__FILE__) . 'admin/class-admin-settings.php';
@@ -49,10 +55,13 @@
     register_activation_hook(__FILE__, ['Custom_Crawler_Core', 'ggc_activation_hooks']);
     register_deactivation_hook(__FILE__, ['Custom_Crawler_Core', 'ggc_deactivation_hooks']);
 
+    // shared option helpers
+    require_once plugin_dir_path(__FILE__) . 'includes/class-option-utils.php';
+
     // 有効化時にオプションの初期値を設定する（空の配列で初期化）
     register_activation_hook(__FILE__, function() {
-        if (false === get_option('ggc_bot_definitions')) update_option('ggc_bot_definitions', []);
-        if (false === get_option('ggc_ip_definitions')) update_option('ggc_ip_definitions', []);
+        if (GGC_Options::option_is_missing('ggc_bot_definitions')) update_option('ggc_bot_definitions', []);
+        if (GGC_Options::option_is_missing('ggc_ip_definitions')) update_option('ggc_ip_definitions', []);
     });
 
     // コアロジックを実行
