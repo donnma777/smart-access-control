@@ -35,9 +35,28 @@
     border-bottom: 1px solid #ddd;
     padding-bottom: 5px;
     cursor: pointer;
-    font-size: 1.1em;
+    font-size: 15px;
     /* 見やすいサイズに調整 */
     font-weight: 600;
+}
+
+.ggc-panel>.ggc-group-header {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.ggc-group-content .ggc-group-header {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ggc-group-header small {
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.ggc-group-content .ggc-group-header small {
+    font-size: 10px;
 }
 
 /* ------------------------------------------------------------------- */
@@ -82,8 +101,15 @@
 .ggc-ip-range-item,
 .ggc-page-pattern-item {
     margin-bottom: 5px;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.4;
+}
+
+.ggc-crawler-item strong,
+.ggc-ip-range-item strong,
+.ggc-page-pattern-item strong {
+    font-size: 12px;
+    font-weight: 500;
 }
 
 .ggc-crawler-item small,
@@ -144,4 +170,209 @@
     background: #fff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     font-size: 13px;
+}
+
+/* ------------------------------------------------------------------- */
+/* メタボックス用のユーティリティ */
+/* ------------------------------------------------------------------- */
+.ggc-collapsible-summary {
+    cursor: pointer;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.ggc-section {
+    margin-top: 15px;
+    border-top: 1px dashed #eee;
+    padding-top: 10px;
+}
+
+.ggc-label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 6px;
+}
+
+.ggc-input-full {
+    width: 100%;
+}
+
+.ggc-textarea-full {
+    width: 100%;
+}
+
+.ggc-description-small {
+    font-size: 11px;
+}
+
+.ggc-description-tight {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+.ggc-description-top {
+    margin-top: 6px;
+}
+
+.ggc-panel--scroll {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 10px;
+}
+
+.ggc-preview-box {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    background: #fff;
+    display: none;
+}
+
+.ggc-img-thumb {
+    max-width: 120px;
+    max-height: 120px;
+    display: block;
+}
+
+.ggc-img-thumb-sm {
+    max-width: 80px;
+    max-height: 80px;
+    display: block;
+}
+
+.ggc-muted {
+    color: #999;
+    font-size: 12px;
+}
+
+.ggc-panel--scroll-sm {
+    max-height: 160px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 8px;
+}
+
+.ggc-heading {
+    margin: 0 0 10px;
+}
+
+.ggc-intro {
+    font-size: 11px;
+    margin-top: 0;
+}
+
+.ggc-link-note {
+    font-size: 11px;
+    margin-top: 15px;
+}
+
+.ggc-section-header {
+    margin: 0 0 8px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+}
+
+.ggc-section-header--spaced {
+    margin: 12px 0 8px;
+}
+
+.ggc-section-header--tight {
+    margin: 10px 0 5px;
+}
+
+.ggc-section-header--loose {
+    margin: 15px 0 5px;
+}
+
+.ggc-toggle-link {
+    float: right;
+    cursor: pointer;
+    color: #0073aa;
+}
+
+.ggc-mt-0 {
+    margin-top: 0;
+}
+
+.ggc-mt-8 {
+    margin-top: 8px;
+}
+
+.ggc-mt-16 {
+    margin-top: 16px;
+}
+
+.ggc-mb-8 {
+    margin-bottom: 8px;
+}
+
+.ggc-ml-8 {
+    margin-left: 8px;
+}
+
+.ggc-text-12 {
+    font-size: 12px;
+}
+
+.ggc-text-bold {
+    font-weight: bold;
+}
+
+.ggc-text-muted {
+    color: #888;
+}
+
+.ggc-text-success {
+    color: green;
+}
+
+.ggc-item-tight {
+    display: block;
+    margin-bottom: 3px;
+}
+
+.ggc-media-alt-list {
+    list-style: none;
+    padding-left: 0;
+}
+
+.ggc-media-alt-item {
+    margin-bottom: 10px;
+}
+
+.ggc-media-alt-thumb {
+    max-width: 80px;
+    max-height: 80px;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.ggc-media-alt-input {
+    width: 60%;
+}
+
+/* ------------------------------------------------------------------- */
+/* メッセージプレビュー */
+/* ------------------------------------------------------------------- */
+.ggc-message-preview {
+    background-color: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 12px;
+    margin: 8px 0;
+}
+
+.ggc-message-preview p {
+    margin: 6px 0;
+}
+
+.ggc-message-content {
+    background-color: #fff;
+    border-left: 3px solid #0073aa;
+    padding: 8px 12px;
+    margin: 8px 0 !important;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }

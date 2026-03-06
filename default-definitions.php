@@ -137,7 +137,7 @@ function ggc_get_default_bots() {
         ],
 
         // --- LINE（参考：不定だが対応可能） ---
-        'LINE' => [
+        'LINE_Preview' => [
             'uas' => ['Line'], // 不完全だが参考値
             'label' => 'LINE (リンクプレビュー)',
             'group_label' => '4. SNS / プレビュー系',
@@ -186,7 +186,7 @@ function ggc_get_default_bots() {
 function ggc_get_default_browser_patterns() {
     return [
         'curl_fake' => [
-            'pattern' => 'curl',
+            'pattern' => '^curl/',
             'label' => 'cURL (不正ツール)',
             'group_label' => '不正アクセスツール',
             'description' => 'スクリプトによるアクセスツール (通常はブラウザアクセスではない)。',
@@ -249,7 +249,7 @@ function ggc_get_default_browser_patterns() {
             'description' => 'Node.jsからのアクセス。',
         ],
         'unknown_bot_1' => [
-            'pattern' => 'Java/',
+            'pattern' => '^Java/',
             'label' => 'Java/ (不明ボット)',
             'group_label' => 'その他のボット',
             'description' => 'Java環境からの不明なアクセス。',
@@ -265,6 +265,131 @@ function ggc_get_default_browser_patterns() {
             'label' => 'okhttp (不明ボット)',
             'group_label' => 'その他のボット',
             'description' => 'モバイルアプリ等からの不明なアクセス。',
+        ]
+    ];
+}
+
+/**
+ * 初期 マークダウンテンプレート
+ * @return array
+ */
+function ggc_get_default_markdown_templates() {
+    return [
+        'default' => [
+            'title' => '閲覧制限中',
+            'markdown' => "# 閲覧制限\n\nこのページは現在、アクセス条件により内容が制限されています。\n\n- 対象ユーザー: 許可されたUser-Agent / IPのみ\n- 詳細: 管理者にお問い合わせください\n",
+            'image_url' => '',
+            'image_id' => 0,
+            'random_enabled' => 1,
+        ],
+        'maintenance' => [
+            'title' => 'メンテナンス中',
+            'markdown' => "# メンテナンス中\n\nただいまメンテナンスを実施しています。\n\nご不便をおかけしますが、しばらくしてから再度アクセスしてください。\n",
+            'image_url' => '',
+            'image_id' => 0,
+            'random_enabled' => 0,
+        ],
+        'members_only' => [
+            'title' => '会員限定コンテンツ',
+            'markdown' => "# 会員限定\n\nこのコンテンツは会員限定で公開されています。\n\n- ログイン済みの方: トップページからアクセスしてください\n- 未登録の方: 会員登録をご検討ください\n",
+            'image_url' => '',
+            'image_id' => 0,
+            'random_enabled' => 0,
+        ],
+        'verify_access' => [
+            'title' => 'アクセス確認',
+            'markdown' => "# アクセス確認\n\n不正アクセス防止のため、現在のアクセスは制限されています。\n\n- 正常なアクセスであれば、時間をおいて再度お試しください\n- 問題が続く場合はお問い合わせください\n",
+            'image_url' => '',
+            'image_id' => 0,
+            'random_enabled' => 0,
+        ],
+        'limited_preview' => [
+            'title' => '限定公開',
+            'markdown' => "# 限定公開\n\nこのページは特定条件のユーザーにのみ公開されています。\n\n- 条件: 指定のUser-Agent / IP\n- お問い合わせ: サポート窓口までご連絡ください\n",
+            'image_url' => '',
+            'image_id' => 0,
+            'random_enabled' => 0,
+        ],
+    ];
+}
+
+/**
+ * 初期 ページ評価（ブロックメッセージ）定義
+ * @return array
+ */
+function ggc_get_default_page_eval_messages() {
+    return [
+        'default_block' => [
+            'label' => 'アクセス禁止（標準）',
+            'is_global' => 1,
+            'status_code' => 403,
+            'message' => 'アクセス禁止：このページは閲覧できません。',
+        ],
+        'ua_blocked' => [
+            'label' => 'User-Agent ブロック',
+            'is_global' => 1,
+            'status_code' => 403,
+            'message' => 'アクセス禁止：許可されていないUser-Agentです。',
+        ],
+        'ip_blocked' => [
+            'label' => 'IP ブロック',
+            'is_global' => 1,
+            'status_code' => 403,
+            'message' => 'アクセス禁止：許可されていないIPアドレスです。',
+        ],
+        'maintenance_block' => [
+            'label' => 'メンテナンス中',
+            'is_global' => 0,
+            'status_code' => 503,
+            'message' => 'メンテナンス中のため一時的に閲覧できません。',
+        ],
+        'not_found' => [
+            'label' => 'ページが見つかりません',
+            'is_global' => 0,
+            'status_code' => 404,
+            'message' => 'ページが見つかりません。',
+        ],
+        'gone' => [
+            'label' => 'ページは利用できません',
+            'is_global' => 0,
+            'status_code' => 410,
+            'message' => 'このページは利用できなくなりました。',
+        ],
+        'too_many_requests' => [
+            'label' => 'リクエスト数が多すぎます',
+            'is_global' => 0,
+            'status_code' => 429,
+            'message' => 'リクエスト数が多すぎます。しばらく時間を置いてからアクセスしてください。',
+        ],
+        'unavailable_for_legal_reasons' => [
+            'label' => '法的理由により利用不可',
+            'is_global' => 0,
+            'status_code' => 451,
+            'message' => '法的理由によりこのページは利用できません。',
+        ],
+        'bad_request' => [
+            'label' => '不正なリクエスト',
+            'is_global' => 0,
+            'status_code' => 400,
+            'message' => '不正なリクエストです。',
+        ],
+        'unauthorized' => [
+            'label' => '認証が必要',
+            'is_global' => 0,
+            'status_code' => 401,
+            'message' => '認証が必要です。ログインしてください。',
+        ],
+        'method_not_allowed' => [
+            'label' => 'メソッドが許可されていない',
+            'is_global' => 0,
+            'status_code' => 405,
+            'message' => 'このHTTPメソッドは許可されていません。',
+        ],
+        'internal_server_error' => [
+            'label' => 'サーバーエラー',
+            'is_global' => 0,
+            'status_code' => 500,
+            'message' => 'サーバーで予期しないエラーが発生しました。',
         ]
     ];
 }
