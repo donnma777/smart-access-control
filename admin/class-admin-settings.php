@@ -1162,6 +1162,9 @@ class Custom_Admin_Settings {
                     <span style="color:#b91c1c; font-size:0.98em;">(完全にアクセスを防ぐ保証はありません。ご了承ください。詳しくは「プラグインの使い方」タブやGitHubリポジトリをご覧ください。)</span>
                 </div>
                 <div style="margin-bottom:0.3em;">
+                    <a href="https://donnma.com/public-app-smart-access-control-v4-0-0/" target="_blank" style="text-decoration:none; color:#2563eb; font-weight:bold;">🔗 画像付き説明書をみる</a>
+                </div>
+                <div style="margin-bottom:0.3em;">
                     <a href="https://github.com/donnma777/smart-access-control" target="_blank" style="text-decoration:none; color:#2563eb; font-weight:bold;">🔗 GitHub : リポジトリを見る</a>
                 </div>
                 <div style="color:#555; font-size:0.98em;">
