@@ -243,7 +243,7 @@ trait Custom_Admin_Usage {
             </tbody>
         </table>
 
-        <p>グローバル設定で適用されるUser-Agent、IPアドレスの評価の挙動は下記の通りです。</p>
+        <p>User-Agent、IPアドレスの評価の挙動は下記の通りです。</p>
         <table class="widefat striped ggc-table-spaced">
             <thead>
                 <tr>
