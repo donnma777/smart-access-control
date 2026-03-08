@@ -432,7 +432,7 @@ trait Custom_Admin_Usage {
                 </tr>
                 <tr>
                     <td><strong>バージョン</strong></td>
-                    <td>4.0.0</td>
+                    <td>4.0.1</td>
                 </tr>
                 <tr>
                     <td><strong>作者</strong></td>
