@@ -254,8 +254,8 @@ class GGC_Eval_Utils {
                         continue;
                     }
                     if (strpos($pattern, '^') === 0) {
-                        $regex = '/' . substr($pattern, 1) . '/i';
-                        if (preg_match($regex, $user_agent)) {
+                        // ^ は先頭一致（正規表現ではない。curl/ などの / をそのまま扱う）
+                        if (strlen($pattern) > 1 && stripos($user_agent, substr($pattern, 1)) === 0) {
                             return true;
                         }
                     } else {
@@ -281,8 +281,8 @@ class GGC_Eval_Utils {
                         continue;
                     }
                     if (strpos($pattern, '^') === 0) {
-                        $regex = '/' . substr($pattern, 1) . '/i';
-                        if (preg_match($regex, $user_agent)) {
+                        // ^ は先頭一致（正規表現ではない。curl/ などの / をそのまま扱う）
+                        if (strlen($pattern) > 1 && stripos($user_agent, substr($pattern, 1)) === 0) {
                             return true;
                         }
                     } else {
